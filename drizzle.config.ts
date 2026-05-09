@@ -1,7 +1,9 @@
 import { defineConfig } from "drizzle-kit";
-import { ensureDatabaseUrl } from "./server/database-url";
+import { resolveDatabaseUrl } from "./server/database-url";
 
-const databaseUrl = ensureDatabaseUrl();
+const databaseUrl =
+  resolveDatabaseUrl() ||
+  "postgres://placeholder:placeholder@localhost:5432/placeholder";
 
 export default defineConfig({
   out: "./migrations",
