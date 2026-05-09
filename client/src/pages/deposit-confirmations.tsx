@@ -35,8 +35,8 @@ type MatchProductItem = {
   quantity?: number;
 };
 
-const DEFAULT_DEPOSIT_BANK = "하나은행";
-const DEPOSIT_BANK_OPTIONS = ["하나은행", "국민은행", "농협은행", "카드결제", "크몽", "기타"] as const;
+const DEFAULT_DEPOSIT_BANK = "국민은행";
+const DEPOSIT_BANK_OPTIONS = ["국민은행", "하나은행", "농협은행", "카드결제", "크몽", "기타"] as const;
 const DEPOSIT_BANK_OPTION_SET = new Set<string>(DEPOSIT_BANK_OPTIONS);
 
 function normalizeDepositBankOption(value: unknown, fallback = DEFAULT_DEPOSIT_BANK) {
@@ -473,9 +473,18 @@ export default function DepositConfirmationsPage() {
 
   const getResolvedDepositContractAmount = (deposit: Deposit, matchedContract?: Contract | null) => {
     const storedAmount = Math.max(Number(deposit.totalContractAmount) || 0, 0);
-    if (storedAmount > 0) return storedAmount;
     if (!matchedContract) return storedAmount;
     const computedAmount = Math.max(getContractMatchAmount(matchedContract), 0);
+    const baseContractAmount = Math.max(Number(matchedContract.cost) || 0, 0);
+    const depositAmount = Math.max(Number(deposit.depositAmount) || 0, 0);
+    const looksLikeAutoMappedBaseAmount =
+      storedAmount > 0 &&
+      baseContractAmount > 0 &&
+      storedAmount === baseContractAmount &&
+      depositAmount === baseContractAmount &&
+      computedAmount > storedAmount;
+    if (looksLikeAutoMappedBaseAmount) return computedAmount;
+    if (storedAmount > 0) return storedAmount;
     return computedAmount;
   };
 

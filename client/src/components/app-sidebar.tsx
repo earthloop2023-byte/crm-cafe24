@@ -28,7 +28,6 @@ import {
   ChevronDown,
   Package,
   Calculator,
-  MapPin,
 } from "lucide-react";
 import { usePermissions } from "@/lib/permissions";
 
@@ -47,22 +46,11 @@ const menuItems: MenuItem[] = [
     children: [{ title: "\uB9E4\uCD9C\uBD84\uC11D", url: "/analytics/sales" }],
   },
   {
-    title: "\uB9C8\uCF00\uD305\uC0AC\uC5C5\uBCF8\uBD80",
+    title: "\uB9C8\uCF00\uD305 \uBCF8\uBD80",
     icon: FileText,
     children: [
       { title: "\uACC4\uC57D\uAD00\uB9AC", url: "/contracts" },
       { title: "\uACE0\uAC1D\uAD00\uB9AC", url: "/customers" },
-    ],
-  },
-  {
-    title: "\uD0C0\uC9C0\uC5ED\uC11C\uBE44\uC2A4",
-    icon: MapPin,
-    children: [
-      { title: "\uACE0\uAC1DDB", url: "/deals" },
-      { title: "\uACE0\uAC1D\uB9AC\uC2A4\uD2B8", url: "/regional-customer-list" },
-      { title: "\uBBF8\uB0A9", url: "/regional-unpaids" },
-      { title: "\uBBF8\uB0A9DB", url: "/regional-unpaid-db" },
-      { title: "\uAD00\uB9AC\uBE44", url: "/regional-management-fees" },
     ],
   },
   {
@@ -100,8 +88,7 @@ export function AppSidebar() {
   const [location] = useLocation();
   const [openMenus, setOpenMenus] = useState<string[]>([
     "\uD1B5\uACC4/\uBD84\uC11D",
-    "\uB9C8\uCF00\uD305\uC0AC\uC5C5\uBCF8\uBD80",
-    "\uD0C0\uC9C0\uC5ED\uC11C\uBE44\uC2A4",
+    "\uB9C8\uCF00\uD305 \uBCF8\uBD80",
     "\uC7AC\uBB34/\uD68C\uACC4",
     "\uC0C1\uD488/\uACAC\uC801\uAD00\uB9AC",
     "\uC124\uC815",
@@ -110,6 +97,7 @@ export function AppSidebar() {
   const { logout, user } = useAuth();
   const { settings } = useSettings();
   const isDeveloper = user?.role === "\uAC1C\uBC1C\uC790";
+  const companyName = settings.company_name || "EARTH LOOP MARKETING";
 
   const toggleMenu = (title: string) => {
     setOpenMenus((prev) => (prev.includes(title) ? prev.filter((t) => t !== title) : [...prev, title]));
@@ -150,11 +138,13 @@ export function AppSidebar() {
   return (
     <Sidebar className="border-r border-border">
       <SidebarHeader className="p-5 border-b border-border">
-        <div className="flex items-center gap-3">
-          <img src="/favicon.png" alt={settings.company_name} className="w-10 h-10 object-cover" />
-          <div>
-            <h1 className="text-lg font-bold leading-tight">{settings.company_name}</h1>
-            <p className="text-xs text-muted-foreground">CRM System</p>
+        <div className="earthloop-brand flex items-center gap-3">
+          <span className="earthloop-logo-shell" aria-hidden="true">
+            <img src="/earthloop-logo.png" alt="" className="earthloop-logo-img" />
+          </span>
+          <div className="min-w-0">
+            <h1 className="earthloop-wordmark leading-tight">EARTH LOOP</h1>
+            <p className="earthloop-subtitle truncate" title={companyName}>MARKETING CRM</p>
           </div>
         </div>
       </SidebarHeader>

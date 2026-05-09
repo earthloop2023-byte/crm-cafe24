@@ -89,10 +89,10 @@ export default function OrgChart() {
     <div className="min-h-screen bg-background p-8">
       <div className="text-center mb-12">
         <h1 className="text-3xl font-bold tracking-tight mb-2" data-testid="text-org-title">
-          주식회사 인덕 조직도
+          어스루프마케팅 조직도
         </h1>
         <p className="text-muted-foreground text-sm">
-          INDUK Corporation Organization & Talent Management
+          Earthloop Marketing Organization & Talent Management
         </p>
       </div>
 

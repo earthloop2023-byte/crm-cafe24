@@ -297,6 +297,16 @@ const parseContractProductDetailsForAnalytics = (rawValue: unknown): ContractPro
   }
 };
 
+const getAnalyticsQuantity = (item: {
+  addQuantity?: number | null;
+  extendQuantity?: number | null;
+  quantity?: number | null;
+}) => {
+  const quantity = Math.max(Number(item.quantity) || 0, 0);
+  if (quantity > 0) return quantity;
+  return Math.max(Number(item.addQuantity) || 0, 0) + Math.max(Number(item.extendQuantity) || 0, 0);
+};
+
 const getCurrentKoreanMonthStart = () => {
   const now = getKoreanNow();
   return new Date(now.getFullYear(), now.getMonth(), 1);
@@ -840,10 +850,7 @@ export default function SalesAnalyticsPage() {
             sum +
               detailItems.reduce((detailSum, item) => {
                 if (!hasSlotHint && !isSlotLikeProduct(String(item.productName || ""))) return detailSum;
-                const days = Math.max(Number(item.days) || 0, 0);
-                const addQuantity = Math.max(Number(item.addQuantity) || 0, 0);
-                const extendQuantity = Math.max(Number(item.extendQuantity) || 0, 0);
-                return detailSum + days + addQuantity + extendQuantity;
+                return detailSum + getAnalyticsQuantity(item);
               }, 0)
           );
         }
@@ -853,10 +860,7 @@ export default function SalesAnalyticsPage() {
           getContractAnalyticsProductNames(contract).some((productName) => isSlotLikeProduct(productName));
         if (!hasSlotProduct) return sum;
 
-        const days = Math.max(Number(contract.days) || 0, 0);
-        const addQuantity = Math.max(Number(contract.addQuantity) || 0, 0);
-        const extendQuantity = Math.max(Number(contract.extendQuantity) || 0, 0);
-        return sum + days + addQuantity + extendQuantity;
+        return sum + getAnalyticsQuantity(contract);
       }, 0),
     [marketingContractSummarySource, productByName, productByBaseName],
   );

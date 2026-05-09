@@ -9,7 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { FileText, Plus, Search, Trash2, Eye, Printer, X } from "lucide-react";
+import { FileText, Plus, Search, Trash2, Eye, Printer, X, Pencil } from "lucide-react";
 import { Pagination } from "@/components/pagination";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -17,7 +17,7 @@ import { useSettings } from "@/lib/settings";
 import { useAuth } from "@/lib/auth";
 import type { Quotation, Product, QuotationItem } from "@shared/schema";
 
-const companyLogoImg = "/favicon.png";
+const companyLogoImg = "/earthloop-logo.png";
 const user = {} as { department?: string } | null;
 const products: Product[] = [];
 
@@ -119,6 +119,35 @@ function itemsToFormGroups(items: QuotationItem[]): ProductGroup[] {
   return groups.length > 0 ? groups : [{ ...emptyProductGroup, subGroups: [{ ...emptySubGroup, lines: [{ ...emptyLine }] }] }];
 }
 
+function toDateInputValue(value: string | Date | null | undefined): string {
+  if (!value) return "";
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? "" : date.toISOString().split("T")[0];
+}
+
+function quotationToFormData(quotation: Quotation): QuotationFormData {
+  let items: QuotationItem[] = [];
+  try {
+    items = typeof quotation.items === "string" ? JSON.parse(quotation.items) : quotation.items;
+  } catch {
+    items = [];
+  }
+
+  return {
+    quotationNumber: quotation.quotationNumber,
+    quotationDate: toDateInputValue(quotation.quotationDate),
+    validUntil: toDateInputValue(quotation.validUntil),
+    customerName: quotation.customerName || "",
+    customerCompany: quotation.customerCompany || "",
+    customerPhone: quotation.customerPhone || "",
+    customerEmail: quotation.customerEmail || "",
+    projectName: quotation.projectName || "",
+    bankType: quotation.bankType || "bank1",
+    productGroups: itemsToFormGroups(items),
+    notes: quotation.notes || "",
+  };
+}
+
 function getInitialFormData(): QuotationFormData {
   const today = new Date().toISOString().split("T")[0];
   const validDate = new Date();
@@ -134,7 +163,7 @@ function getInitialFormData(): QuotationFormData {
     projectName: "",
     bankType: "bank1",
     productGroups: [{ ...emptyProductGroup, subGroups: [{ ...emptySubGroup, lines: [{ ...emptyLine }] }] }],
-    notes: "1. 귀사의 무궁한 발전을 기원합니다.\n2. 본 견적서는 견적일로부터 14일간 유효합니다.\n3. 포털사이트(네이버/인스타그램) 로직 변경시, 작업 방식에 일부 변경될 수 있습니다.\n4. 프로젝트 종료 해지 시, 잔사 환불은 요금에 따라 위약금이 발생할 수 있습니다.\n5. 프로젝트 결과물을 주식회사 인덕의 포트폴리오 자료로 활용될 수 있습니다.",
+    notes: "1. 귀사의 무궁한 발전을 기원합니다.\n2. 본 견적서는 견적일로부터 14일간 유효합니다.\n3. 포털사이트(네이버/인스타그램) 로직 변경시, 작업 방식에 일부 변경될 수 있습니다.\n4. 프로젝트 종료 해지 시, 잔사 환불은 요금에 따라 위약금이 발생할 수 있습니다.\n5. 프로젝트 결과물을 주식회사 어스루프마케팅의 포트폴리오 자료로 활용될 수 있습니다.",
   };
 }
 
@@ -146,6 +175,7 @@ export default function QuotationsPage() {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [formPreview, setFormPreview] = useState(false);
   const [previewQuotation, setPreviewQuotation] = useState<Quotation | null>(null);
+  const [editingQuotationId, setEditingQuotationId] = useState<string | null>(null);
   const [formData, setFormData] = useState<QuotationFormData>(getInitialFormData());
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize] = useState(10);
@@ -179,6 +209,23 @@ export default function QuotationsPage() {
     },
     onError: () => {
       toast({ title: "견적서 생성에 실패했습니다.", variant: "destructive" });
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: any }) => {
+      return apiRequest("PUT", `/api/quotations/${id}`, data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/quotations"] });
+      setIsFormOpen(false);
+      setEditingQuotationId(null);
+      setFormPreview(false);
+      setFormData(getInitialFormData());
+      toast({ title: "견적서가 수정되었습니다." });
+    },
+    onError: () => {
+      toast({ title: "견적서 수정에 실패했습니다.", variant: "destructive" });
     },
   });
 
@@ -292,6 +339,8 @@ export default function QuotationsPage() {
   };
 
   const openNewForm = async () => {
+    setEditingQuotationId(null);
+    setFormPreview(false);
     try {
       const res = await fetch("/api/quotations/next-number");
       const data = await res.json();
@@ -307,6 +356,14 @@ export default function QuotationsPage() {
     }
   };
 
+  const openEditForm = (quotation: Quotation) => {
+    setPreviewQuotation(null);
+    setEditingQuotationId(quotation.id);
+    setFormPreview(false);
+    setFormData(quotationToFormData(quotation));
+    setIsFormOpen(true);
+  };
+
   const handleSubmit = () => {
     if (!formData.customerName.trim()) {
       toast({ title: "고객명을 입력해주세요.", variant: "destructive" });
@@ -318,7 +375,7 @@ export default function QuotationsPage() {
       return;
     }
     const totals = calculateTotals(items);
-    createMutation.mutate({
+    const payload = {
       quotationNumber: formData.quotationNumber,
       quotationDate: formData.quotationDate,
       validUntil: formData.validUntil || null,
@@ -333,7 +390,14 @@ export default function QuotationsPage() {
       vatAmount: totals.vatAmount,
       totalAmount: totals.totalAmount,
       notes: formData.notes || null,
-    });
+    };
+
+    if (editingQuotationId) {
+      updateMutation.mutate({ id: editingQuotationId, data: payload });
+      return;
+    }
+
+    createMutation.mutate(payload);
   };
 
   const handlePrint = () => {
@@ -401,7 +465,7 @@ export default function QuotationsPage() {
 
     const bt = q.bankType || "bank1";
     const prefix = bt === "bank2" ? "bank2" : "bank1";
-    const supplierName = settings[`${prefix}_supplier_name`] || settings.company_name || "INDUK";
+    const supplierName = settings[`${prefix}_supplier_name`] || settings.company_name || "어스루프마케팅";
     const supplierBusinessNum = settings[`${prefix}_supplier_business_number`] || settings.company_business_number || "";
     const supplierCeo = settings[`${prefix}_supplier_ceo`] || settings.company_ceo || "";
     const bankName = settings[`${prefix}_name`] || "";
@@ -719,7 +783,7 @@ export default function QuotationsPage() {
                 <TableHead className="text-right">총액</TableHead>
                 <TableHead className="w-[110px]">유효기한</TableHead>
                 <TableHead>작성자</TableHead>
-                <TableHead className="w-[100px] text-center">관리</TableHead>
+                <TableHead className="w-[132px] text-center">관리</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -747,7 +811,17 @@ export default function QuotationsPage() {
                         <Button
                           size="icon"
                           variant="ghost"
+                          onClick={() => openEditForm(q)}
+                          title="수정"
+                          data-testid={`button-edit-${q.id}`}
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="ghost"
                           onClick={() => setPreviewQuotation(q)}
+                          title="미리보기"
                           data-testid={`button-preview-${q.id}`}
                         >
                           <Eye className="w-4 h-4" />
@@ -760,6 +834,7 @@ export default function QuotationsPage() {
                               deleteMutation.mutate(q.id);
                             }
                           }}
+                          title="삭제"
                           data-testid={`button-delete-${q.id}`}
                         >
                           <Trash2 className="w-4 h-4" />
@@ -778,12 +853,19 @@ export default function QuotationsPage() {
         <Pagination currentPage={currentPage} totalPages={totalPages} onPageChange={setCurrentPage} />
       </div>
 
-      <Dialog open={isFormOpen} onOpenChange={(open) => { setIsFormOpen(open); if (!open) setFormPreview(false); }}>
+      <Dialog open={isFormOpen} onOpenChange={(open) => {
+        setIsFormOpen(open);
+        if (!open) {
+          setFormPreview(false);
+          setEditingQuotationId(null);
+          setFormData(getInitialFormData());
+        }
+      }}>
         <DialogContent className="max-w-7xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
 
             <DialogTitle className="flex items-center gap-3 pr-8 flex-wrap">
-              <span>{formPreview ? "견적서 미리보기" : "견적서 작성"}</span>
+              <span>{formPreview ? "견적서 미리보기" : editingQuotationId ? "견적서 수정" : "견적서 작성"}</span>
               <Button
                 variant="outline"
                 size="sm"
@@ -827,7 +909,13 @@ export default function QuotationsPage() {
             <div className="grid grid-cols-3 gap-4">
               <div className="space-y-2">
                 <Label>견적번호</Label>
-                <Input value={formData.quotationNumber} readOnly className="bg-muted" data-testid="input-quotation-number" />
+                <Input
+                  value={formData.quotationNumber}
+                  readOnly={!editingQuotationId}
+                  onChange={(e) => setFormData({ ...formData, quotationNumber: e.target.value })}
+                  className={!editingQuotationId ? "bg-muted" : undefined}
+                  data-testid="input-quotation-number"
+                />
               </div>
               <div className="space-y-2">
                 <Label>견적일</Label>
@@ -1102,8 +1190,12 @@ export default function QuotationsPage() {
 
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setIsFormOpen(false)}>취소</Button>
-              <Button onClick={handleSubmit} disabled={createMutation.isPending} data-testid="button-submit">
-                {createMutation.isPending ? "저장 중..." : "견적서 저장"}
+              <Button onClick={handleSubmit} disabled={createMutation.isPending || updateMutation.isPending} data-testid="button-submit">
+                {createMutation.isPending || updateMutation.isPending
+                  ? "저장 중..."
+                  : editingQuotationId
+                    ? "수정 저장"
+                    : "견적서 저장"}
               </Button>
             </div>
           </div>
@@ -1116,10 +1208,18 @@ export default function QuotationsPage() {
           <DialogHeader>
             <DialogTitle className="flex items-center justify-between gap-2 flex-wrap">
               <span>견적서 미리보기</span>
-              <Button onClick={handlePrint} variant="outline" data-testid="button-print">
-                <Printer className="w-4 h-4 mr-1" />
-                인쇄
-              </Button>
+              <div className="flex items-center gap-2">
+                {previewQuotation && (
+                  <Button onClick={() => openEditForm(previewQuotation)} variant="outline" data-testid="button-edit-preview">
+                    <Pencil className="w-4 h-4 mr-1" />
+                    수정
+                  </Button>
+                )}
+                <Button onClick={handlePrint} variant="outline" data-testid="button-print">
+                  <Printer className="w-4 h-4 mr-1" />
+                  인쇄
+                </Button>
+              </div>
             </DialogTitle>
           </DialogHeader>
           {previewQuotation && renderPrintPreview(previewQuotation)}

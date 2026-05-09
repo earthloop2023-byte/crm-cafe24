@@ -383,8 +383,8 @@ const normalizeProductItemsForStorage = (items: ProductItem[]) =>
       vatType: normalizeVatType(item.vatType),
       unitPrice: Math.max(0, Number(item.unitPrice) || 0),
       days: Math.max(1, Number(item.days) || 1),
-      addQuantity: toNonNegativeInt(item.addQuantity),
-      extendQuantity: toNonNegativeInt(item.extendQuantity),
+      addQuantity: 0,
+      extendQuantity: 0,
       quantity: getItemQuantity(item),
       baseDays: Math.max(1, Number(item.baseDays) || 1),
       worker: normalizeText(item.worker),
@@ -629,8 +629,7 @@ export default function PaymentsContentPage() {
       사용자ID: row.item.userIdentifier || "-",
       상품: row.item.productName || "-",
       일수: Number(row.item.days) || 0,
-      추가: Number(row.item.addQuantity) || 0,
-      연장: Number(row.item.extendQuantity) || 0,
+      수량: getItemQuantity(row.item),
       비용: Number(row.totalAmount) || 0,
       담당자: row.contract.managerName || "-",
       결제확인: canonicalPaymentMethod(row.contract.paymentMethod) || "-",
@@ -649,7 +648,6 @@ export default function PaymentsContentPage() {
       { wch: 20 },
       { wch: 18 },
       { wch: 24 },
-      { wch: 8 },
       { wch: 8 },
       { wch: 8 },
       { wch: 14 },
@@ -884,8 +882,7 @@ export default function PaymentsContentPage() {
                   <TableHead className="text-xs font-medium whitespace-nowrap">사용자ID</TableHead>
                   <TableHead className="text-xs font-medium whitespace-nowrap">상품</TableHead>
                   <TableHead className="text-xs font-medium text-center whitespace-nowrap">일수</TableHead>
-                  <TableHead className="text-xs font-medium text-center whitespace-nowrap">추가</TableHead>
-                  <TableHead className="text-xs font-medium text-center whitespace-nowrap">연장</TableHead>
+                  <TableHead className="text-xs font-medium text-center whitespace-nowrap">수량</TableHead>
                   <TableHead className="text-xs font-medium text-right whitespace-nowrap">비용</TableHead>
                   <TableHead className="text-xs font-medium whitespace-nowrap">담당자</TableHead>
                   <TableHead className="text-xs font-medium whitespace-nowrap">결제확인</TableHead>
@@ -902,14 +899,14 @@ export default function PaymentsContentPage() {
                 {isLoading ? (
                   Array.from({ length: 5 }).map((_, i) => (
                     <TableRow key={i}>
-                      {Array.from({ length: 18 }).map((__, j) => (
+                      {Array.from({ length: 17 }).map((__, j) => (
                         <TableCell key={j}><Skeleton className="h-4 w-16" /></TableCell>
                       ))}
                     </TableRow>
                   ))
                 ) : paginatedRows.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={18} className="p-12 text-center text-muted-foreground">
+                    <TableCell colSpan={17} className="p-12 text-center text-muted-foreground">
                       등록된 데이터가 없습니다.
                     </TableCell>
                   </TableRow>
@@ -932,8 +929,7 @@ export default function PaymentsContentPage() {
                       <TableCell className="text-xs whitespace-nowrap">{row.item.userIdentifier || "-"}</TableCell>
                       <TableCell className="text-xs whitespace-nowrap max-w-[180px] break-all">{row.item.productName || "-"}</TableCell>
                       <TableCell className="text-xs text-center whitespace-nowrap">{row.item.days || 0}</TableCell>
-                      <TableCell className="text-xs text-center whitespace-nowrap">{row.item.addQuantity || 0}</TableCell>
-                      <TableCell className="text-xs text-center whitespace-nowrap">{row.item.extendQuantity || 0}</TableCell>
+                      <TableCell className="text-xs text-center whitespace-nowrap">{getItemQuantity(row.item)}</TableCell>
                       <TableCell className="text-xs whitespace-nowrap font-medium text-right">
                         <div className="flex flex-col items-end leading-tight">
                           <span>{formatAmount(getDisplayedNetAmount(row))}원</span>

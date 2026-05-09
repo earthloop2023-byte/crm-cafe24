@@ -122,6 +122,8 @@ export default function KeepsPage() {
   const totalKeepAmount = filteredKeeps.reduce((sum, row) => sum + getKeepAmountWithVat(row), 0);
 
   const formatAmount = (amount: number) => formatCeilAmount(amount);
+  const getKeepQuantity = (keep: KeepWithContract) =>
+    Math.max(0, Number(keep.addQuantity) || 0) + Math.max(0, Number(keep.extendQuantity) || 0);
   const getKeepStatusLabel = (keep: KeepWithContract) => keep.keepStatus || "적립금 재사용";
   const isPendingKeep = (keep: KeepWithContract) => getKeepStatusLabel(keep) === "환불 검토";
 
@@ -251,8 +253,7 @@ export default function KeepsPage() {
                   <th className="p-4 text-left font-medium text-xs whitespace-nowrap">사용자ID</th>
                   <th className="p-4 text-left font-medium text-xs whitespace-nowrap">상품</th>
                   <th className="p-4 text-center font-medium text-xs whitespace-nowrap">일수</th>
-                  <th className="p-4 text-center font-medium text-xs whitespace-nowrap">추가</th>
-                  <th className="p-4 text-center font-medium text-xs whitespace-nowrap">연장</th>
+                  <th className="p-4 text-center font-medium text-xs whitespace-nowrap">수량</th>
                   <th className="p-4 text-right font-medium text-xs whitespace-nowrap">비용</th>
                   <th className="p-4 text-left font-medium text-xs whitespace-nowrap">담당자</th>
                   <th className="p-4 text-left font-medium text-xs whitespace-nowrap">작업자</th>
@@ -275,7 +276,6 @@ export default function KeepsPage() {
                       <td className="p-4"><Skeleton className="h-4 w-32" /></td>
                       <td className="p-4"><Skeleton className="h-4 w-10" /></td>
                       <td className="p-4"><Skeleton className="h-4 w-10" /></td>
-                      <td className="p-4"><Skeleton className="h-4 w-10" /></td>
                       <td className="p-4"><Skeleton className="h-4 w-24" /></td>
                       <td className="p-4"><Skeleton className="h-4 w-20" /></td>
                       <td className="p-4"><Skeleton className="h-4 w-20" /></td>
@@ -289,7 +289,7 @@ export default function KeepsPage() {
                   ))
                 ) : paginatedKeeps.length === 0 ? (
                   <tr>
-                    <td colSpan={17} className="p-12 text-center text-muted-foreground">
+                    <td colSpan={16} className="p-12 text-center text-muted-foreground">
                       등록된 적립금 내역이 없습니다.
                     </td>
                   </tr>
@@ -306,8 +306,7 @@ export default function KeepsPage() {
                         <span className="truncate block">{keep.products || "-"}</span>
                       </td>
                       <td className="p-4 text-xs text-center whitespace-nowrap">{keep.days || 0}</td>
-                      <td className="p-4 text-xs text-center whitespace-nowrap">{keep.addQuantity || 0}</td>
-                      <td className="p-4 text-xs text-center whitespace-nowrap">{keep.extendQuantity || 0}</td>
+                      <td className="p-4 text-xs text-center whitespace-nowrap">{getKeepQuantity(keep)}</td>
                       <td className="p-4 text-xs font-medium text-right whitespace-nowrap">{keep.contractCost != null ? `${formatAmount(getKeepTargetGrossAmount(keep))}원` : "-"}</td>
                       <td className="p-4 text-xs whitespace-nowrap">{keep.managerName || "-"}</td>
                       <td className="p-4 text-xs whitespace-nowrap" data-testid={`text-keep-worker-${keep.id}`}>{keep.worker || "-"}</td>

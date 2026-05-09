@@ -48,7 +48,7 @@ import {
   pagePermissions,
   systemSettings,
 } from "@shared/schema";
-import type { Deal, InsertDeal } from "@shared/schema";
+import type { Contract, Deal, InsertDeal, InsertDeposit } from "@shared/schema";
 import { addKoreanBusinessDays, normalizeToKoreanDateOnly } from "@shared/korean-business-days";
 import { db } from "./db";
 import { eq, inArray } from "drizzle-orm";
@@ -312,7 +312,10 @@ async function ensureContractColumns() {
   await pool.query(`
     ALTER TABLE contracts
     ADD COLUMN IF NOT EXISTS product_details_json text,
-    ADD COLUMN IF NOT EXISTS deposit_bank text
+    ADD COLUMN IF NOT EXISTS deposit_bank text,
+    ADD COLUMN IF NOT EXISTS contract_type text,
+    ADD COLUMN IF NOT EXISTS source_contract_id varchar,
+    ADD COLUMN IF NOT EXISTS source_item_id text
   `);
 }
 
@@ -938,10 +941,11 @@ function normalizeDepositMatchVatType(value: string | null | undefined): "포함
 }
 
 function getDepositMatchItemQuantity(item: DepositMatchProductItemLike): number {
+  const quantity = Math.max(0, Number(item.quantity) || 0);
+  if (quantity > 0) return quantity;
   const addQuantity = Math.max(0, Number(item.addQuantity) || 0);
   const extendQuantity = Math.max(0, Number(item.extendQuantity) || 0);
-  const quantity = Math.max(0, Number(item.quantity) || 0);
-  return addQuantity + extendQuantity > 0 ? addQuantity + extendQuantity : Math.max(1, quantity || 1);
+  return Math.max(1, addQuantity + extendQuantity || 1);
 }
 
 function normalizeDepositMatchText(value: unknown): string {
@@ -1106,7 +1110,8 @@ const REFUND_STATUS_PENDING = "환불대기";
 const REFUND_STATUS_REQUESTED = "환불요청";
 const REFUND_STATUS_COMPLETED = "환불완료";
 const REFUND_STATUS_OFFSET = "상계처리";
-const CONTRACT_DEPOSIT_BANK_DEFAULT = "하나은행";
+const CONTRACT_TYPE_REFUND = "refund";
+const CONTRACT_DEPOSIT_BANK_DEFAULT = "국민은행";
 const FINANCIAL_OVERRIDE_PAYMENT_METHODS = new Set<string>();
 
 function normalizeContractPaymentMethod(value: unknown): string {
@@ -1124,6 +1129,7 @@ function normalizeContractPaymentMethod(value: unknown): string {
   }
   if (
     normalized === PAYMENT_METHOD_REFUND_REQUEST ||
+    normalized === "환불" ||
     normalized === "환불처리" ||
     normalized === "환불등록" ||
     ["refund", "refunded", "refundrequest", "refundrequested"].includes(asciiKey)
@@ -1205,6 +1211,53 @@ function normalizeContractDepositBank(value: unknown, fallbackPaymentMethod?: un
   return CONTRACT_DEPOSIT_BANK_DEFAULT;
 }
 
+function shouldAutoMapDepositConfirmation(contract: Pick<Contract, "cost" | "contractType" | "paymentMethod" | "paymentConfirmed">): boolean {
+  if (String(contract.contractType || "").trim() === CONTRACT_TYPE_REFUND) return false;
+  if ((Number(contract.cost) || 0) <= 0) return false;
+  return normalizeContractPaymentMethod(contract.paymentMethod) === PAYMENT_METHOD_DEPOSIT_CONFIRMED || contract.paymentConfirmed === true;
+}
+
+function buildAutoDepositPayloadFromContract(contract: Contract, confirmedBy: string): InsertDeposit {
+  const amount = Math.max(0, Math.round(getDepositMatchContractAmount(contract)));
+  return {
+    depositDate: contract.contractDate,
+    depositorName: contract.customerName || "-",
+    depositAmount: amount,
+    depositBank: normalizeContractDepositBank(contract.depositBank, contract.paymentMethod),
+    notes: contract.notes || null,
+    confirmedAmount: amount,
+    totalContractAmount: amount,
+    contractId: contract.id,
+    confirmedBy,
+    confirmedAt: new Date(),
+  };
+}
+
+async function upsertAutoDepositConfirmationFromContract(contract: Contract, confirmedBy = "system") {
+  if (!shouldAutoMapDepositConfirmation(contract)) return null;
+
+  const payload = buildAutoDepositPayloadFromContract(contract, confirmedBy);
+  const existingDeposit = await storage.getDepositByContractId(contract.id);
+
+  if (existingDeposit) {
+    const updated = await storage.updateDeposit(existingDeposit.id, {
+      ...payload,
+      depositDate: existingDeposit.depositDate || payload.depositDate,
+      depositBank: existingDeposit.depositBank || payload.depositBank,
+      notes: existingDeposit.notes || payload.notes,
+    });
+    await unmarkContractDepositDeleted(contract.id);
+    return updated;
+  }
+
+  const created = await storage.createDeposit({
+    ...payload,
+    notes: payload.notes || "계약관리 입금확인 자동 매핑",
+  });
+  await unmarkContractDepositDeleted(contract.id);
+  return created;
+}
+
 function isMatchableDepositContract(contract: { paymentMethod?: unknown; paymentConfirmed?: unknown }): boolean {
   const normalized = normalizeContractPaymentMethod(contract.paymentMethod);
   return (
@@ -1250,6 +1303,10 @@ function normalizeRefundStatus(value: unknown): string | null {
     return REFUND_STATUS_OFFSET;
   }
   return normalized;
+}
+
+function isMissingPiiEncryptionKeyError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes("PII_ENCRYPTION_KEY is required to decrypt this value");
 }
 
 function normalizeKeepStatus(value: unknown): string {
@@ -1386,6 +1443,10 @@ const REGIONAL_CHANGED_STATUS_SENTINEL = "__changed__";
 
 function normalizeText(value: unknown): string {
   return String(value ?? "").trim();
+}
+
+function normalizeCompactText(value: unknown): string {
+  return normalizeText(value).replace(/\s+/g, "");
 }
 
 function getRegionalDealStageLabel(stage: unknown): string {
@@ -1554,6 +1615,11 @@ function toAmount(value: unknown): number {
 
 function toWholeAmount(value: unknown): number {
   return Math.max(0, Math.floor(toAmount(value)));
+}
+
+function toSignedWholeAmount(value: unknown): number {
+  const parsed = toAmount(value);
+  return Number.isFinite(parsed) ? Math.trunc(parsed) : 0;
 }
 
 function getKeepDeductionAmount(contract: { totalKeep?: number | null }): number {
@@ -2058,22 +2124,31 @@ function getContractQuantityForWorkCost(contract: {
   extendQuantity?: number | null;
   quantity?: number | null;
 }) {
+  const quantity = Math.max(Number(contract.quantity) || 0, 0);
+  if (quantity > 0) return quantity;
   const addQuantity = Math.max(Number(contract.addQuantity) || 0, 0);
   const extendQuantity = Math.max(Number(contract.extendQuantity) || 0, 0);
-  return addQuantity + extendQuantity > 0
-    ? addQuantity + extendQuantity
-    : Math.max(Number(contract.quantity) || 1, 1);
+  return Math.max(addQuantity + extendQuantity, 1);
 }
 
 type ContractProductDetailForWorkCost = {
+  id?: string | null;
   productName?: string | null;
+  userIdentifier?: string | null;
+  vatType?: string | null;
+  unitPrice?: number | null;
   days?: number | null;
   addQuantity?: number | null;
   extendQuantity?: number | null;
   quantity?: number | null;
   baseDays?: number | null;
+  worker?: string | null;
   workCost?: number | null;
   fixedWorkCostAmount?: number | null;
+  supplyAmount?: number | null;
+  grossSupplyAmount?: number | null;
+  marginAmount?: number | null;
+  adjustmentType?: string | null;
 };
 
 function parseContractProductDetailsForWorkCost(rawValue: unknown): ContractProductDetailForWorkCost[] {
@@ -2085,22 +2160,313 @@ function parseContractProductDetailsForWorkCost(rawValue: unknown): ContractProd
     return parsed
       .filter((item): item is Record<string, unknown> => !!item && typeof item === "object")
       .map((item) => ({
+        id: typeof item.id === "string" ? item.id : null,
         productName: typeof item.productName === "string" ? item.productName : null,
+        userIdentifier: typeof item.userIdentifier === "string" ? item.userIdentifier : null,
+        vatType: typeof item.vatType === "string" ? item.vatType : null,
+        unitPrice: Number(item.unitPrice) || 0,
         days: Number(item.days) || 0,
         addQuantity: Number(item.addQuantity) || 0,
         extendQuantity: Number(item.extendQuantity) || 0,
         quantity: Number(item.quantity) || 0,
         baseDays: Number(item.baseDays) || 0,
+        worker: typeof item.worker === "string" ? item.worker : null,
         workCost: Number(item.workCost) || 0,
         fixedWorkCostAmount:
           item.fixedWorkCostAmount === null || item.fixedWorkCostAmount === undefined
             ? null
             : Number(item.fixedWorkCostAmount) || 0,
+        supplyAmount:
+          item.supplyAmount === null || item.supplyAmount === undefined
+            ? null
+            : toSignedWholeAmount(item.supplyAmount),
+        grossSupplyAmount:
+          item.grossSupplyAmount === null || item.grossSupplyAmount === undefined
+            ? null
+            : toSignedWholeAmount(item.grossSupplyAmount),
+        marginAmount:
+          item.marginAmount === null || item.marginAmount === undefined
+            ? null
+            : toSignedWholeAmount(item.marginAmount),
+        adjustmentType: typeof item.adjustmentType === "string" ? item.adjustmentType : null,
       }))
       .filter((item) => String(item.productName || "").trim().length > 0);
   } catch {
     return [];
   }
+}
+
+function getUnifiedContractQuantity(
+  quantityValue: unknown,
+  addQuantityValue: unknown,
+  extendQuantityValue: unknown,
+  fallback = 0,
+) {
+  const quantity = Math.max(0, Math.round(Number(quantityValue) || 0));
+  if (quantity > 0) return quantity;
+  const splitQuantity =
+    Math.max(0, Math.round(Number(addQuantityValue) || 0)) +
+    Math.max(0, Math.round(Number(extendQuantityValue) || 0));
+  return splitQuantity > 0 ? splitQuantity : Math.max(0, Math.round(Number(fallback) || 0));
+}
+
+function normalizeContractProductDetailsQuantity(rawValue: unknown) {
+  if (typeof rawValue !== "string" || !rawValue.trim()) return rawValue;
+  try {
+    const parsed = JSON.parse(rawValue);
+    if (!Array.isArray(parsed)) return rawValue;
+    return JSON.stringify(
+      parsed.map((item) => {
+        if (!item || typeof item !== "object") return item;
+        return {
+          ...item,
+          addQuantity: 0,
+          extendQuantity: 0,
+          quantity: getUnifiedContractQuantity(
+            (item as Record<string, unknown>).quantity,
+            (item as Record<string, unknown>).addQuantity,
+            (item as Record<string, unknown>).extendQuantity,
+          ),
+        };
+      }),
+    );
+  } catch {
+    return rawValue;
+  }
+}
+
+function normalizeContractQuantityPayload<T extends Record<string, any>>(payload: T): T {
+  const next: Record<string, any> = { ...payload };
+  const hasQuantityFields =
+    Object.prototype.hasOwnProperty.call(next, "quantity") ||
+    Object.prototype.hasOwnProperty.call(next, "addQuantity") ||
+    Object.prototype.hasOwnProperty.call(next, "extendQuantity");
+
+  if (hasQuantityFields) {
+    next.quantity = getUnifiedContractQuantity(next.quantity, next.addQuantity, next.extendQuantity);
+    next.addQuantity = 0;
+    next.extendQuantity = 0;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(next, "productDetailsJson")) {
+    next.productDetailsJson = normalizeContractProductDetailsQuantity(next.productDetailsJson);
+  }
+
+  return next as T;
+}
+
+function findRefundSourceProductDetail(
+  contract: { productDetailsJson?: string | null },
+  itemId?: string | null,
+  userIdentifier?: string | null,
+  productName?: string | null,
+): ContractProductDetailForWorkCost | null {
+  const items = parseContractProductDetailsForWorkCost(contract.productDetailsJson);
+  const normalizedItemId = normalizeText(itemId);
+  if (normalizedItemId) {
+    const exact = items.find((item) => normalizeText(item.id) === normalizedItemId);
+    if (exact) return exact;
+  }
+
+  const normalizedUserIdentifier = normalizeCompactText(userIdentifier);
+  const normalizedProductName = normalizeCompactText(productName);
+  if (!normalizedUserIdentifier && !normalizedProductName) return null;
+
+  return (
+    items.find(
+      (item) =>
+        (!normalizedUserIdentifier || normalizeCompactText(item.userIdentifier) === normalizedUserIdentifier) &&
+        (!normalizedProductName || normalizeCompactText(item.productName) === normalizedProductName),
+    ) || null
+  );
+}
+
+function getRefundQuantitySplit(
+  sourceItem: ContractProductDetailForWorkCost | null,
+  refundQuantity: number,
+) {
+  return { addQuantity: 0, extendQuantity: 0 };
+}
+
+function getRefundContractNumber(
+  sourceContract: { contractNumber?: string | null },
+  refundDate: Date,
+) {
+  const sourceNumber = normalizeText(sourceContract.contractNumber) || "CONTRACT";
+  const dateKey = getKoreanDateKey(refundDate)?.replace(/-/g, "") || "refund";
+  return `${sourceNumber}-RF-${dateKey}-${crypto.randomUUID().slice(0, 8)}`;
+}
+
+function getRefundContractWorkCostAmount(
+  sourceContract: { workCost?: number | null },
+  sourceItem: ContractProductDetailForWorkCost | null,
+  refundAmount: number,
+  effectiveTargetAmount: number,
+  refundQuantity: number,
+  refundDays: number,
+) {
+  const sourceUnitWorkCost = Math.max(0, Number(sourceItem?.workCost) || 0);
+  const sourceBaseDays = Math.max(1, Number(sourceItem?.baseDays) || 0, 1);
+  if (sourceUnitWorkCost > 0 && refundQuantity > 0 && refundDays > 0) {
+    return Math.round((sourceUnitWorkCost / sourceBaseDays) * refundQuantity * refundDays);
+  }
+
+  const sourceFixedWorkCost = Math.max(0, Number(sourceItem?.fixedWorkCostAmount) || 0);
+  if (sourceFixedWorkCost > 0 && effectiveTargetAmount > 0) {
+    return Math.round(sourceFixedWorkCost * (refundAmount / effectiveTargetAmount));
+  }
+
+  const sourceSupplyAmount = Math.max(0, Number(sourceItem?.supplyAmount) || 0);
+  const sourceMarginAmount = Number(sourceItem?.marginAmount);
+  if (sourceSupplyAmount > 0 && Number.isFinite(sourceMarginAmount)) {
+    const sourceWorkCost = Math.max(0, sourceSupplyAmount - sourceMarginAmount);
+    if (sourceWorkCost > 0) {
+      return Math.round(sourceWorkCost * (refundAmount / sourceSupplyAmount));
+    }
+  }
+
+  const contractWorkCost = Math.max(0, Number(sourceContract.workCost) || 0);
+  if (contractWorkCost > 0 && effectiveTargetAmount > 0) {
+    return Math.round(contractWorkCost * (refundAmount / effectiveTargetAmount));
+  }
+
+  return 0;
+}
+
+function buildRefundContractPayload(
+  sourceContract: {
+    id: string;
+    contractNumber: string;
+    contractDate: Date;
+    managerId?: string | null;
+    managerName: string;
+    customerId?: string | null;
+    customerName: string;
+    products?: string | null;
+    cost?: number | null;
+    depositBank?: string | null;
+    invoiceIssued?: string | null;
+    worker?: string | null;
+    workCost?: number | null;
+    userIdentifier?: string | null;
+    productDetailsJson?: string | null;
+    paymentMethod?: string | null;
+  },
+  refundInput: {
+    itemId?: string | null;
+    userIdentifier?: string | null;
+    productName?: string | null;
+    days?: number | null;
+    targetAmount?: number | null;
+    amount: number;
+    quantity?: number | null;
+    refundDays?: number | null;
+    worker?: string | null;
+    reason?: string | null;
+    refundDate: Date;
+  },
+  effectiveTargetAmount: number,
+) {
+  const sourceItem = findRefundSourceProductDetail(
+    sourceContract,
+    refundInput.itemId || null,
+    refundInput.userIdentifier || null,
+    refundInput.productName || null,
+  );
+  const refundQuantity = Math.max(0, Math.round(Number(refundInput.quantity) || 0));
+  const refundDays = Math.max(0, Math.round(Number(refundInput.refundDays) || 0));
+  const { addQuantity, extendQuantity } = getRefundQuantitySplit(sourceItem, refundQuantity);
+  const refundAmount = Math.max(0, Math.round(Number(refundInput.amount) || 0));
+  const refundWorkCost = getRefundContractWorkCostAmount(
+    sourceContract,
+    sourceItem,
+    refundAmount,
+    effectiveTargetAmount,
+    refundQuantity,
+    refundDays,
+  );
+  const productName = normalizeText(refundInput.productName || sourceItem?.productName || sourceContract.products) || "환불";
+  const userIdentifier = normalizeText(refundInput.userIdentifier || sourceItem?.userIdentifier || sourceContract.userIdentifier);
+  const vatType =
+    normalizeText(sourceItem?.vatType) ||
+    vatTypeFromInvoiceIssued(sourceContract.invoiceIssued) ||
+    "미포함";
+  const unitPrice =
+    Math.max(0, Number(sourceItem?.unitPrice) || 0) ||
+    (refundQuantity > 0 ? Math.round(effectiveTargetAmount / refundQuantity) : 0);
+  const negativeRefundAmount = -refundAmount;
+  const negativeRefundWorkCost = -refundWorkCost;
+  const marginAmount = negativeRefundAmount - negativeRefundWorkCost;
+  const sourceItemId = normalizeText(refundInput.itemId || sourceItem?.id);
+
+  const productDetailsJson = JSON.stringify([
+    {
+      id: `refund-${sourceItemId || "item"}-${crypto.randomUUID().slice(0, 8)}`,
+      productName,
+      userIdentifier,
+      vatType,
+      unitPrice,
+      days: refundDays > 0 ? -refundDays : 0,
+      addQuantity,
+      extendQuantity,
+      quantity: refundQuantity,
+      baseDays: Math.max(1, Number(sourceItem?.baseDays) || Number(refundInput.days) || 1),
+      worker: normalizeText(refundInput.worker || sourceItem?.worker || sourceContract.worker),
+      workCost: Math.max(0, Number(sourceItem?.workCost) || 0),
+      fixedWorkCostAmount: negativeRefundWorkCost,
+      disbursementStatus: "",
+      supplyAmount: negativeRefundAmount,
+      grossSupplyAmount:
+        parseInvoiceIssuedFlag(sourceContract.invoiceIssued) === true
+          ? -(refundAmount + Math.round(refundAmount * 0.1))
+          : negativeRefundAmount,
+      refundAmount: 0,
+      negativeAdjustmentAmount: negativeRefundAmount,
+      marginAmount,
+      adjustmentType: CONTRACT_TYPE_REFUND,
+      sourceContractId: sourceContract.id,
+      sourceItemId: sourceItemId || null,
+      refundReason: normalizeText(refundInput.reason),
+    },
+  ]);
+
+  const noteParts = [
+    `환불 계약`,
+    `원계약번호: ${sourceContract.contractNumber}`,
+    `원계약ID: ${sourceContract.id}`,
+    sourceItemId ? `원항목ID: ${sourceItemId}` : null,
+    refundInput.reason ? `사유: ${refundInput.reason}` : null,
+  ].filter(Boolean);
+
+  return {
+    contractNumber: getRefundContractNumber(sourceContract, refundInput.refundDate),
+    contractDate: refundInput.refundDate,
+    contractName: null,
+    managerId: sourceContract.managerId || undefined,
+    managerName: sourceContract.managerName,
+    customerId: sourceContract.customerId || undefined,
+    customerName: sourceContract.customerName,
+    products: productName,
+    cost: negativeRefundAmount,
+    days: refundDays > 0 ? -refundDays : 0,
+    quantity: refundQuantity,
+    addQuantity,
+    extendQuantity,
+    paymentConfirmed: false,
+    paymentMethod: PAYMENT_METHOD_REFUND_REQUEST,
+    depositBank: normalizeContractDepositBank(sourceContract.depositBank, sourceContract.paymentMethod),
+    invoiceIssued: sourceContract.invoiceIssued,
+    worker: normalizeText(refundInput.worker || sourceItem?.worker || sourceContract.worker),
+    workCost: negativeRefundWorkCost,
+    notes: noteParts.join(" / "),
+    disbursementStatus: "",
+    executionPaymentStatus: "입금전",
+    userIdentifier,
+    productDetailsJson,
+    contractType: CONTRACT_TYPE_REFUND,
+    sourceContractId: sourceContract.id,
+    sourceItemId: sourceItemId || null,
+  };
 }
 
 function computeContractWorkCostFromProducts(
@@ -4182,6 +4548,11 @@ export async function registerRoutes(
           await storage.createPayment(paymentPayload);
         }
 
+        await upsertAutoDepositConfirmationFromContract(
+          { ...existingContract, ...nextContract, paymentMethod: PAYMENT_METHOD_DEPOSIT_CONFIRMED, paymentConfirmed: true },
+          String((req.session as any).userId || "system"),
+        );
+
         updatedCount += 1;
       }
 
@@ -4202,6 +4573,86 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/contracts/:id/refund-contracts", async (req, res) => {
+    try {
+      const contractId = toSingleString(req.params.id).trim();
+      const itemId = toSingleString(req.query.itemId as string | string[] | undefined).trim();
+      const refundContracts = await storage.getRefundContractsBySource(contractId, itemId || undefined);
+      res.json(refundContracts);
+    } catch (error) {
+      console.error("Error fetching refund contracts:", error);
+      res.status(500).json({ error: "Failed to fetch refund contracts" });
+    }
+  });
+
+  app.post("/api/contracts/refund-entry", async (req, res) => {
+    try {
+      const body = { ...req.body };
+      if (typeof body.refundDate === "string") {
+        const normalizedRefundDate = normalizeToKoreanContractDate(body.refundDate);
+        body.refundDate = normalizedRefundDate || new Date(body.refundDate);
+      }
+      body.amount = toWholeAmount(body.amount);
+      body.targetAmount = toWholeAmount(body.targetAmount);
+
+      const parsed = insertRefundSchema.parse({
+        ...body,
+        refundStatus: normalizeRefundStatus(body.refundStatus) ?? REFUND_STATUS_PENDING,
+      });
+      if (parsed.amount <= 0) {
+        return res.status(400).json({ error: "Refund amount must be greater than zero." });
+      }
+
+      const contract = await storage.getContract(parsed.contractId);
+      if (!contract) {
+        return res.status(404).json({ error: "Contract not found." });
+      }
+      if (contract.contractType === CONTRACT_TYPE_REFUND) {
+        return res.status(400).json({ error: "Refund contracts cannot be refunded again." });
+      }
+
+      const targetAmount = Math.max(0, Number(parsed.targetAmount) || 0);
+      const effectiveTargetAmount = targetAmount > 0 ? targetAmount : Math.max(0, Number(contract.cost) || 0);
+      if (parsed.amount > effectiveTargetAmount) {
+        return res.status(400).json({ error: "Refund amount cannot exceed selected row amount." });
+      }
+
+      const [existingRefunds, existingRefundContracts] = await Promise.all([
+        storage.getRefundsByContract(parsed.contractId, parsed.itemId || undefined),
+        storage.getRefundContractsBySource(parsed.contractId, parsed.itemId || undefined),
+      ]);
+      const totalRefunded = existingRefunds.reduce((sum, r) => sum + Math.max(Number(r.amount) || 0, 0), 0);
+      const totalRefundContractAmount = existingRefundContracts.reduce(
+        (sum, refundContract) => sum + Math.abs(Number(refundContract.cost) || 0),
+        0,
+      );
+      const remainingCost = effectiveTargetAmount - totalRefunded - totalRefundContractAmount;
+      if (parsed.amount > remainingCost) {
+        return res.status(400).json({ error: "Refund amount cannot exceed remaining selected row amount." });
+      }
+
+      const refundContractPayload = insertContractSchema.parse(
+        buildRefundContractPayload(contract, parsed, effectiveTargetAmount),
+      );
+      const refundContract = await storage.createContract(refundContractPayload);
+
+      await writeSystemLog(req, {
+        actionType: "contract_create",
+        action: `계약 환불 등록: ${refundContract.contractNumber}`,
+        details: `sourceContractId=${contract.id}, refundContractId=${refundContract.id}, amount=${parsed.amount}`,
+      });
+
+      res.status(201).json({
+        success: true,
+        sourceContractId: contract.id,
+        refundContract,
+      });
+    } catch (error) {
+      console.error("Error creating refund contract:", error);
+      res.status(500).json({ error: "Failed to create refund contract" });
+    }
+  });
+
   app.post("/api/contracts", async (req, res) => {
     try {
       const body = { ...req.body };
@@ -4217,7 +4668,7 @@ export async function registerRoutes(
       if (!parsed.success) {
         return res.status(400).json({ error: "Invalid contract data", details: parsed.error });
       }
-      const normalizedContractData = { ...parsed.data };
+      const normalizedContractData = normalizeContractQuantityPayload({ ...parsed.data });
       normalizedContractData.paymentMethod = normalizeContractPaymentMethod(normalizedContractData.paymentMethod);
       normalizedContractData.depositBank = normalizeContractDepositBank(
         normalizedContractData.depositBank,
@@ -4243,6 +4694,11 @@ export async function registerRoutes(
 
         return createdContract;
       });
+
+      await upsertAutoDepositConfirmationFromContract(
+        contract as Contract,
+        String((req.session as any).userId || "system"),
+      );
 
       res.status(201).json(contract);
     } catch (error) {
@@ -4272,35 +4728,36 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Contract not found" });
       }
 
+      const normalizedParsedData = normalizeContractQuantityPayload({ ...parsed.data });
       const updatePayload: Record<string, any> = {
-        ...parsed.data,
+        ...normalizedParsedData,
         contractName: null,
       };
-      if (Object.prototype.hasOwnProperty.call(parsed.data, "paymentMethod")) {
-        updatePayload.paymentMethod = normalizeContractPaymentMethod(parsed.data.paymentMethod);
+      if (Object.prototype.hasOwnProperty.call(normalizedParsedData, "paymentMethod")) {
+        updatePayload.paymentMethod = normalizeContractPaymentMethod(normalizedParsedData.paymentMethod);
       }
       if (
-        Object.prototype.hasOwnProperty.call(parsed.data, "depositBank") ||
-        Object.prototype.hasOwnProperty.call(parsed.data, "paymentMethod")
+        Object.prototype.hasOwnProperty.call(normalizedParsedData, "depositBank") ||
+        Object.prototype.hasOwnProperty.call(normalizedParsedData, "paymentMethod")
       ) {
         updatePayload.depositBank = normalizeContractDepositBank(
-          Object.prototype.hasOwnProperty.call(parsed.data, "depositBank")
-            ? parsed.data.depositBank
+          Object.prototype.hasOwnProperty.call(normalizedParsedData, "depositBank")
+            ? normalizedParsedData.depositBank
             : existingContract.depositBank,
-          Object.prototype.hasOwnProperty.call(parsed.data, "paymentMethod")
+          Object.prototype.hasOwnProperty.call(normalizedParsedData, "paymentMethod")
             ? updatePayload.paymentMethod
             : existingContract.paymentMethod,
         );
       }
       const shouldRecomputeWorkCost = ["products", "days", "quantity", "addQuantity", "extendQuantity", "workCost"]
-        .some((key) => Object.prototype.hasOwnProperty.call(parsed.data, key));
+        .some((key) => Object.prototype.hasOwnProperty.call(normalizedParsedData, key));
       if (shouldRecomputeWorkCost) {
         const [allProducts, allProductRateHistories] = await Promise.all([
           storage.getProducts(),
           storage.getProductRateHistories(),
         ]);
         updatePayload.workCost = computeContractWorkCostFromProducts(
-          { ...existingContract, ...parsed.data },
+          { ...existingContract, ...normalizedParsedData },
           allProducts,
           allProductRateHistories,
         );
@@ -4326,6 +4783,11 @@ export async function registerRoutes(
       if (!contract) {
         return res.status(404).json({ error: "Contract not found" });
       }
+
+      await upsertAutoDepositConfirmationFromContract(
+        contract as Contract,
+        String((req.session as any).userId || "system"),
+      );
 
       const changedFields = Object.keys(parsed.data || {});
       await writeSystemLog(req, {
@@ -4367,6 +4829,10 @@ export async function registerRoutes(
       const allRefunds = await storage.getAllRefunds();
       res.json(allRefunds);
     } catch (error) {
+      if (isMissingPiiEncryptionKeyError(error)) {
+        console.warn("Refund reference data skipped because PII_ENCRYPTION_KEY is not configured.");
+        return res.json([]);
+      }
       console.error("Error fetching all refunds:", error);
       res.status(500).json({ error: "Failed to fetch refunds" });
     }
@@ -4407,6 +4873,10 @@ export async function registerRoutes(
       const refundList = await storage.getRefundsByContract(req.params.contractId, itemId || undefined);
       res.json(refundList);
     } catch (error) {
+      if (isMissingPiiEncryptionKeyError(error)) {
+        console.warn("Contract refund reference data skipped because PII_ENCRYPTION_KEY is not configured.");
+        return res.json([]);
+      }
       console.error("Error fetching refunds:", error);
       res.status(500).json({ error: "Failed to fetch refunds" });
     }
@@ -8336,13 +8806,9 @@ export async function registerRoutes(
             let vatAmount = Number(row.vatAmount) || 0;
             const uploadedCost = Number(row.cost) || 0;
             const rowDays = row.days ? Number(row.days) : 0;
-            const rawAddQuantity = getBulkImportMappedRawValue(row.rawData, importMappingConfig, "addQuantity");
-            const rawExtendQuantity = getBulkImportMappedRawValue(row.rawData, importMappingConfig, "extendQuantity");
-            const addQuantity = Math.max(0, parseBulkImportInteger(rawAddQuantity, 0));
-            const extendQuantity = Math.max(0, parseBulkImportInteger(rawExtendQuantity, 0));
-            const rowQuantity = addQuantity + extendQuantity > 0
-              ? addQuantity + extendQuantity
-              : Math.max(1, Number(row.quantity) || 1);
+            const addQuantity = 0;
+            const extendQuantity = 0;
+            const rowQuantity = Math.max(1, Number(row.quantity) || 1);
 
             if (supplyAmount === 0 && vatAmount === 0 && uploadedCost > 0) {
               supplyAmount = uploadedCost;
@@ -8498,10 +8964,10 @@ export async function registerRoutes(
     try {
       res.json({
         슬롯: {
-          headers: ["날짜", "요청", "사용자", "담당자", "품명", "단가", "일수", "추가", "연장", "결제금액", "작업자", "계산서발행", "결제확인", "비고"],
+          headers: ["날짜", "요청", "사용자", "담당자", "품명", "단가", "일수", "수량", "결제금액", "작업자", "계산서발행", "결제확인", "비고"],
         },
         바이럴: {
-          headers: ["날짜", "신청업체", "담당자", "상품", "단가", "일수", "추가", "연장", "총금액(공급가)", "작업자", "계산서발행", "결제확인", "지급현황", "비고"],
+          headers: ["날짜", "신청업체", "담당자", "상품", "단가", "일수", "수량", "총금액(공급가)", "작업자", "계산서발행", "결제확인", "지급현황", "비고"],
         },
       });
     } catch (error) {

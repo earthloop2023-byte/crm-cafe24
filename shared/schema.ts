@@ -338,6 +338,9 @@ export const contracts = pgTable("contracts", {
   executionPaymentStatus: text("execution_payment_status").default("입금전"),
   userIdentifier: text("user_identifier"),
   productDetailsJson: text("product_details_json"),
+  contractType: text("contract_type"),
+  sourceContractId: varchar("source_contract_id"),
+  sourceItemId: text("source_item_id"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

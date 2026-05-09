@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -41,10 +41,10 @@ import { formatCeilAmount } from "@/lib/utils";
 import { matchesKoreanSearch } from "@shared/korean-search";
 
 const DEFAULT_CREATE_PAYMENT_METHOD = "입금 전";
-const DEFAULT_CREATE_DEPOSIT_BANK = "하나은행";
+const DEFAULT_CREATE_DEPOSIT_BANK = "국민은행";
 const DEFAULT_CREATE_VAT_TYPE = "포함";
 const CONTRACT_PAYMENT_METHOD_OPTIONS = ["입금 전", "입금확인", "적립금사용", "환불요청", "기타"] as const;
-const CONTRACT_DEPOSIT_BANK_OPTIONS = ["하나은행", "국민은행", "농협은행", "카드결제", "크몽", "기타"] as const;
+const CONTRACT_DEPOSIT_BANK_OPTIONS = ["국민은행", "하나은행", "농협은행", "카드결제", "크몽", "기타"] as const;
 
 function AutocompleteInput({ 
   value, 
@@ -298,7 +298,6 @@ export default function ContractsPage() {
   const [editingContractId, setEditingContractId] = useState<string | null>(null);
   const [selectedItems, setSelectedItems] = useState<string[]>([]);
   const [selectedRowMap, setSelectedRowMap] = useState<Record<string, ContractListRow>>({});
-  const [keepSelectionAcrossPages, setKeepSelectionAcrossPages] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(100);
   const [productItemNumericDrafts, setProductItemNumericDrafts] = useState<Record<string, string>>({});
@@ -333,9 +332,13 @@ export default function ContractsPage() {
     refundAmount?: number | null;
     negativeAdjustmentAmount?: number | null;
     marginAmount?: number | null;
+    adjustmentType?: string | null;
+    sourceContractId?: string | null;
+    sourceItemId?: string | null;
+    refundReason?: string | null;
   }
 
-  type EditableNumericProductField = "unitPrice" | "days" | "addQuantity" | "extendQuantity";
+  type EditableNumericProductField = "unitPrice" | "days" | "quantity";
 
   type ContractListRow = {
     rowKey: string;
@@ -371,6 +374,10 @@ export default function ContractsPage() {
     refundAmount: null,
     negativeAdjustmentAmount: null,
     marginAmount: null,
+    adjustmentType: null,
+    sourceContractId: null,
+    sourceItemId: null,
+    refundReason: null,
   });
 
   const getDefaultContractFormData = (): Partial<InsertContract> => ({
@@ -572,13 +579,6 @@ export default function ContractsPage() {
     setCurrentPage(1);
   }, [deferredSearchQuery, managerFilter, customerFilter, productFilter, paymentFilter, sortOption, startDate, endDate]);
 
-  useEffect(() => {
-    if (!keepSelectionAcrossPages) {
-      setSelectedItems([]);
-      setSelectedRowMap({});
-    }
-  }, [contractsQueryString, keepSelectionAcrossPages]);
-
   const createMutation = useMutation({
     mutationFn: (data: InsertContract) => apiRequest("POST", "/api/contracts", data),
     onSuccess: () => {
@@ -715,6 +715,17 @@ export default function ContractsPage() {
     enabled: !!refundContractId,
   });
 
+  const { data: refundContractHistory = [] } = useQuery<Contract[]>({
+    queryKey: ["/api/contracts", refundContractId, "refund-contracts", refundTargetItem?.id || null],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (refundTargetItem?.id) params.set("itemId", refundTargetItem.id);
+      const query = params.toString();
+      return fetch(`/api/contracts/${refundContractId}/refund-contracts${query ? `?${query}` : ""}`, { credentials: "include" }).then(r => r.json());
+    },
+    enabled: !!refundContractId,
+  });
+
   const refundMutation = useMutation({
     mutationFn: (data: {
       contractId: string;
@@ -735,7 +746,7 @@ export default function ContractsPage() {
       refundDate: Date;
       createdBy: string;
     }) =>
-      apiRequest("POST", "/api/refunds", {
+      apiRequest("POST", "/api/contracts/refund-entry", {
         contractId: data.contractId,
         itemId: data.itemId,
         userIdentifier: data.userIdentifier,
@@ -761,6 +772,7 @@ export default function ContractsPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/contracts-with-financials"] });
       queryClient.invalidateQueries({ queryKey: ["/api/refunds"] });
       queryClient.invalidateQueries({ queryKey: ["/api/refunds", refundContractId, refundTargetItem?.id || null] });
+      queryClient.invalidateQueries({ queryKey: ["/api/contracts", refundContractId, "refund-contracts", refundTargetItem?.id || null] });
       queryClient.invalidateQueries({ queryKey: ["/api/payments"] });
       queryClient.invalidateQueries({ queryKey: ["/api/customers"] });
       queryClient.invalidateQueries({ queryKey: ["/api/deposits"] });
@@ -772,7 +784,7 @@ export default function ContractsPage() {
       setRefundSlot("");
       setRefundWorker("");
       setRefundReason("");
-      toast({ title: "환불이 환불관리 목록에 등록되었습니다." });
+      toast({ title: "환불 계약이 계약관리 목록에 등록되었습니다." });
       setIsRefundOpen(false);
       setRefundContractId(null);
       setRefundTargetItem(null);
@@ -812,7 +824,7 @@ export default function ContractsPage() {
     }));
   };
   const showProfitColumns = currentUser?.role !== "B";
-  const contractsTableColSpan = showProfitColumns ? 17 : 14;
+  const contractsTableColSpan = showProfitColumns ? 16 : 13;
   const isEditReadOnly = editDialogMode === "view";
   const matchedDepositForEditingContract = editingContractId
     ? linkedDepositByContractId.get(editingContractId) ?? null
@@ -858,6 +870,19 @@ export default function ContractsPage() {
   const toNonNegativeInt = (v: unknown) => Math.max(0, Math.round(Number(v) || 0));
   const toNonNegativeAmount = (v: unknown) => Math.max(0, Number(v) || 0);
   const toNonNegativeWholeAmount = (v: unknown) => Math.max(0, Math.floor(Number(v) || 0));
+  const toSignedInt = (v: unknown) => Math.round(Number(v) || 0);
+  const toSignedAmount = (v: unknown) => {
+    const parsed = Number(v);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+  const isRefundContract = (contract: Partial<Contract> | null | undefined) => {
+    const typedContract = contract as (Partial<Contract> & { contractType?: string | null }) | null | undefined;
+    return String(typedContract?.contractType || "").trim() === "refund" || Number(contract?.cost) < 0;
+  };
+  const isRefundProductItem = (item: ProductItem | null | undefined) =>
+    String(item?.adjustmentType || "").trim() === "refund" ||
+    Number(item?.supplyAmount) < 0 ||
+    Number(item?.days) < 0;
   const parseOptionalNonNegativeInt = (raw: string) => {
     if (raw.trim() === "") return 0;
     const parsed = Number.parseInt(raw, 10);
@@ -868,7 +893,11 @@ export default function ContractsPage() {
     const parsed = new Date(`${value}T12:00:00+09:00`);
     return Number.isNaN(parsed.getTime()) ? fallback : parsed;
   };
-  const getItemQuantity = (item: ProductItem) => toNonNegativeInt(item.addQuantity) + toNonNegativeInt(item.extendQuantity);
+  const getItemQuantity = (item: ProductItem) => {
+    const quantity = toNonNegativeInt(item.quantity);
+    if (quantity > 0) return quantity;
+    return toNonNegativeInt(item.addQuantity) + toNonNegativeInt(item.extendQuantity);
+  };
   const getLegacyCompatibleQuantity = (
     addQuantityValue: unknown,
     extendQuantityValue: unknown,
@@ -876,28 +905,12 @@ export default function ContractsPage() {
   ) => {
     const addQuantity = toNonNegativeInt(addQuantityValue);
     const extendQuantity = toNonNegativeInt(extendQuantityValue);
-    const combinedQuantity = addQuantity + extendQuantity;
-    if (combinedQuantity > 0) {
-      return {
-        addQuantity,
-        extendQuantity,
-        quantity: combinedQuantity,
-      };
-    }
-
     const fallbackQuantity = toNonNegativeInt(fallbackQuantityValue);
-    if (fallbackQuantity > 0) {
-      return {
-        addQuantity: fallbackQuantity,
-        extendQuantity: 0,
-        quantity: fallbackQuantity,
-      };
-    }
-
+    const combinedQuantity = addQuantity + extendQuantity;
     return {
-      addQuantity,
-      extendQuantity,
-      quantity: 0,
+      addQuantity: 0,
+      extendQuantity: 0,
+      quantity: fallbackQuantity > 0 ? fallbackQuantity : combinedQuantity,
     };
   };
   const getProductByName = (productName: string) => products.find((p) => p.name === productName);
@@ -935,9 +948,12 @@ export default function ContractsPage() {
   };
   const isViralCategory = (category: string | null | undefined) => (category ?? "").replace(/\s+/g, "") === "바이럴상품";
   const isViralItem = (item: ProductItem) => isViralCategory(getProductByName(item.productName)?.category);
-  const getEffectiveDays = (item: ProductItem) => (isViralItem(item) ? 1 : Math.max(1, toNonNegativeInt(item.days) || 1));
+  const getEffectiveDays = (item: ProductItem) => {
+    if (isRefundProductItem(item)) return toSignedInt(item.days);
+    return isViralItem(item) ? 1 : Math.max(1, toNonNegativeInt(item.days) || 1);
+  };
 
-  // 공급가액 = 단가 * 수량(추가+연장)
+  // 공급가액 = 단가 * 수량
   const calculateSupplyAmount = (item: ProductItem) => {
     if (item.supplyAmount !== null && item.supplyAmount !== undefined) {
       const storedSupplyAmount = Number(item.supplyAmount);
@@ -948,11 +964,13 @@ export default function ContractsPage() {
     return item.unitPrice * getItemQuantity(item);
   };
 
-  // 작업비 = (작업단가 / 기준일수) * 수량(추가+연장) * 일수
+  // 작업비 = (작업단가 / 기준일수) * 수량 * 일수
   // 행(item)에 담긴 값을 우선 사용하고, 없으면 상품 마스터 값으로 보완
   const calculateWorkCost = (item: ProductItem, paymentMethodOverride?: string | null | undefined) => {
     if (item.fixedWorkCostAmount !== null && item.fixedWorkCostAmount !== undefined) {
-      return toNonNegativeAmount(item.fixedWorkCostAmount);
+      return isRefundProductItem(item)
+        ? toSignedAmount(item.fixedWorkCostAmount)
+        : toNonNegativeAmount(item.fixedWorkCostAmount);
     }
     const snapshot = resolveProductSnapshotAtDate(item.productName, formData.contractDate);
     const product = getProductByName(item.productName);
@@ -967,7 +985,8 @@ export default function ContractsPage() {
       ? storedBaseDays
       : Math.max(1, toNonNegativeInt(snapshot?.baseDays) || 0, toNonNegativeInt(product?.baseDays) || 0, 1);
     const dailyWorkCost = workerUnitCost / workerBaseDays;
-    return dailyWorkCost * getItemQuantity(item) * getEffectiveDays(item);
+    const computed = dailyWorkCost * getItemQuantity(item) * getEffectiveDays(item);
+    return isRefundProductItem(item) ? computed : Math.max(0, computed);
   };
 
   const calculateVat = (item: ProductItem) => {
@@ -1021,7 +1040,7 @@ export default function ContractsPage() {
     ) {
       return "입금확인";
     }
-    if (["환불요청", "환불처리", "환불등록"].includes(raw) || ["refund", "refunded", "refundrequest", "refundrequested"].includes(asciiKey)) {
+    if (["환불", "환불요청", "환불처리", "환불등록"].includes(raw) || ["refund", "refunded", "refundrequest", "refundrequested"].includes(asciiKey)) {
       return "환불요청";
     }
     if (["적립금사용", "적립금 사용", "적립금", "적립"].includes(raw) || ["usekeep", "usecredit", "credituse", "keepuse", "keep", "credit"].includes(asciiKey)) {
@@ -1133,8 +1152,8 @@ export default function ContractsPage() {
           vatType: normalizeVatType(item.vatType),
           unitPrice: Number(item.unitPrice) || 0,
           days: getEffectiveDays(item),
-          addQuantity: toNonNegativeInt(item.addQuantity),
-          extendQuantity: toNonNegativeInt(item.extendQuantity),
+          addQuantity: 0,
+          extendQuantity: 0,
           quantity: getItemQuantity(item),
           baseDays: Math.max(1, toNonNegativeInt(item.baseDays) || 1),
           worker: String(item.worker || "").trim(),
@@ -1171,6 +1190,11 @@ export default function ContractsPage() {
             .map((item, index): ProductItem | null => {
               const productName = String(item.productName || "").trim();
               if (!productName) return null;
+              const adjustmentType = String(item.adjustmentType || "").trim() || null;
+              const isRefundDetail =
+                adjustmentType === "refund" ||
+                Number(item.supplyAmount) < 0 ||
+                Number(item.days) < 0;
               const product = getProductByName(productName);
               const snapshot = resolveProductSnapshotAtDate(productName, contract.contractDate);
               const viralProduct = isViralCategory(product?.category);
@@ -1193,7 +1217,7 @@ export default function ContractsPage() {
                 userIdentifier: String(item.userIdentifier || "").trim(),
                 vatType: normalizeVatType(String(item.vatType ?? snapshot?.vatType ?? product?.vatType ?? "")),
                 unitPrice: Number(item.unitPrice) || 0,
-                days: viralProduct ? 1 : Math.max(1, Number(item.days) || baseDays || 1),
+                days: isRefundDetail ? toSignedInt(item.days) : (viralProduct ? 1 : Math.max(1, Number(item.days) || baseDays || 1)),
                 addQuantity,
                 extendQuantity,
                 quantity,
@@ -1203,7 +1227,9 @@ export default function ContractsPage() {
                 fixedWorkCostAmount:
                   item.fixedWorkCostAmount === null || item.fixedWorkCostAmount === undefined
                     ? null
-                    : Math.max(0, Number(item.fixedWorkCostAmount) || 0),
+                    : isRefundDetail
+                      ? Number(item.fixedWorkCostAmount) || 0
+                      : Math.max(0, Number(item.fixedWorkCostAmount) || 0),
                 disbursementStatus: normalizeDisbursementStatus(item.disbursementStatus ?? contract.disbursementStatus ?? ""),
                 supplyAmount:
                   item.supplyAmount === null || item.supplyAmount === undefined
@@ -1225,6 +1251,10 @@ export default function ContractsPage() {
                   item.marginAmount === null || item.marginAmount === undefined
                     ? null
                     : Number(item.marginAmount) || 0,
+                adjustmentType,
+                sourceContractId: String(item.sourceContractId || contract.sourceContractId || "").trim() || null,
+                sourceItemId: String(item.sourceItemId || contract.sourceItemId || "").trim() || null,
+                refundReason: String(item.refundReason || "").trim() || null,
               };
               return hydratedItem;
             });
@@ -1308,8 +1338,8 @@ export default function ContractsPage() {
       products: storedProductItems.map((item) => item.productName).join(", "),
       cost: validItems.reduce((sum, item) => sum + calculateSupplyAmount(item), 0),
       days: firstItem ? getEffectiveDays(firstItem) : Number(contract.days) || 0,
-      addQuantity: firstItem?.addQuantity || 0,
-      extendQuantity: firstItem?.extendQuantity || 0,
+      addQuantity: 0,
+      extendQuantity: 0,
       quantity: firstItem ? getItemQuantity(firstItem) : Math.max(0, Number(contract.quantity) || 0),
       workCost: validItems.reduce((sum, item) => sum + calculateWorkCost(item), 0),
       worker: storedProductItems.map((item) => item.worker).filter(Boolean).join(", "),
@@ -1333,8 +1363,7 @@ export default function ContractsPage() {
         const next = { ...prev };
         delete next[`${id}:unitPrice`];
         delete next[`${id}:days`];
-        delete next[`${id}:addQuantity`];
-        delete next[`${id}:extendQuantity`];
+        delete next[`${id}:quantity`];
         return next;
       });
     }
@@ -1385,11 +1414,9 @@ export default function ContractsPage() {
             updated.fixedWorkCostAmount = null;
           }
         }
-        const addQuantity = toNonNegativeInt(updated.addQuantity);
-        const extendQuantity = toNonNegativeInt(updated.extendQuantity);
-        updated.addQuantity = addQuantity;
-        updated.extendQuantity = extendQuantity;
-        updated.quantity = addQuantity + extendQuantity;
+        updated.quantity = toNonNegativeInt(updated.quantity);
+        updated.addQuantity = 0;
+        updated.extendQuantity = 0;
         updated.supplyAmount = null;
         updated.grossSupplyAmount = null;
         updated.marginAmount = null;
@@ -1491,8 +1518,8 @@ export default function ContractsPage() {
       products: productNames,
       cost: totalSupplyAmount,
       days: firstProduct ? getEffectiveDays(firstProduct) : 0,
-      addQuantity: firstProduct?.addQuantity || 0,
-      extendQuantity: firstProduct?.extendQuantity || 0,
+      addQuantity: 0,
+      extendQuantity: 0,
       quantity: firstProduct ? getItemQuantity(firstProduct) : 0,
       workCost: totalWorkCost,
       worker: workerNames,
@@ -1507,7 +1534,7 @@ export default function ContractsPage() {
   };
 
   const openContractDialog = (contractToOpen: Contract, mode: "edit" | "view") => {
-    setEditDialogMode(mode);
+    setEditDialogMode(isRefundContract(contractToOpen) ? "view" : mode);
     setEditingContractId(contractToOpen.id);
     const displayItems = getContractDisplayItems(contractToOpen);
     setFormData({
@@ -1603,8 +1630,8 @@ export default function ContractsPage() {
       products: productNames,
       cost: totalSupplyAmount,
       days: firstProduct ? getEffectiveDays(firstProduct) : 0,
-      addQuantity: firstProduct?.addQuantity || 0,
-      extendQuantity: firstProduct?.extendQuantity || 0,
+      addQuantity: 0,
+      extendQuantity: 0,
       quantity: firstProduct ? getItemQuantity(firstProduct) : 0,
       workCost: totalWorkCost,
       worker: workerNames,
@@ -1671,7 +1698,41 @@ export default function ContractsPage() {
 
   const refundContract = contracts.find(c => c.id === refundContractId);
   const historyTotalRefunded = refundHistory.reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
-  const totalRefunded = historyTotalRefunded;
+  const refundContractHistoryTotal = refundContractHistory.reduce((sum, contract) => sum + Math.abs(Number(contract.cost) || 0), 0);
+  const totalRefunded = historyTotalRefunded + refundContractHistoryTotal;
+  const combinedRefundHistoryRows = useMemo(() => {
+    const legacyRows = refundHistory.map((refund) => ({
+      id: refund.id,
+      refundDate: refund.refundDate,
+      quantity: Number(refund.quantity) || 0,
+      refundDays: Number(refund.refundDays) || 0,
+      amount: Math.abs(Number(refund.amount) || 0),
+      account: refund.account || "",
+      slot: refund.slot || "",
+      worker: refund.worker || "",
+      reason: refund.reason || "",
+      source: "환불관리",
+    }));
+    const contractRows = refundContractHistory.map((contract) => {
+      const item = getContractDisplayItems(contract)[0] || createEmptyProductItem("refund");
+      return {
+        id: contract.id,
+        refundDate: contract.contractDate,
+        quantity: Math.max(0, Number(contract.quantity) || getItemQuantity(item) || 0),
+        refundDays: Math.abs(Number(contract.days) || Number(item.days) || 0),
+        amount: Math.abs(Number(contract.cost) || calculateSupplyAmount(item) || 0),
+        account: item.userIdentifier || contract.userIdentifier || "",
+        slot: item.productName || contract.products || "",
+        worker: item.worker || contract.worker || "",
+        reason: item.refundReason || contract.notes || "",
+        source: "계약관리",
+      };
+    });
+
+    return [...legacyRows, ...contractRows].sort(
+      (a, b) => new Date(b.refundDate as Date | string).getTime() - new Date(a.refundDate as Date | string).getTime(),
+    );
+  }, [refundHistory, refundContractHistory, products, productRateHistories]);
   const previewRefundAmount = toNonNegativeWholeAmount(refundAmount);
   const refundTargetAmount = Math.max(
     0,
@@ -1700,13 +1761,7 @@ export default function ContractsPage() {
     );
     const baseQuantity = Math.max(
       1,
-      targetItem
-        ? getItemQuantity(targetItem)
-        : (
-            Math.max(0, Number(contract.addQuantity) || 0) + Math.max(0, Number(contract.extendQuantity) || 0) > 0
-              ? Math.max(0, Number(contract.addQuantity) || 0) + Math.max(0, Number(contract.extendQuantity) || 0)
-              : Math.max(1, Number(contract.quantity) || 1)
-          ),
+      targetItem ? getItemQuantity(targetItem) : Math.max(1, Number(contract.quantity) || getContractQuantity(contract) || 1),
     );
     const baseDays = Math.max(1, targetItem ? getEffectiveDays(targetItem) : Number(contract.days) || 1);
     const unitPerDay = baseAmount / baseQuantity / baseDays;
@@ -1725,6 +1780,10 @@ export default function ContractsPage() {
       return;
     }
     const { contract, item } = singleSelectedRow;
+    if (isRefundContract(contract)) {
+      toast({ title: "환불 계약은 다시 환불할 수 없습니다.", variant: "destructive" });
+      return;
+    }
     const defaultQuantity = getItemQuantity(item);
     const defaultRefundDays = getEffectiveDays(item);
     setRefundContractId(contract.id);
@@ -1778,8 +1837,8 @@ export default function ContractsPage() {
       userIdentifier: refundTargetItem?.userIdentifier || contract.userIdentifier || null,
       productName: refundTargetItem?.productName || contract.products || null,
       days: refundTargetItem ? getEffectiveDays(refundTargetItem) : Number(contract.days) || 0,
-      addQuantity: refundTargetItem?.addQuantity || 0,
-      extendQuantity: refundTargetItem?.extendQuantity || 0,
+      addQuantity: 0,
+      extendQuantity: 0,
       targetAmount: refundTargetAmount,
       amount: normalizedRefundAmount,
       quantity: refundQuantity,
@@ -1886,6 +1945,13 @@ export default function ContractsPage() {
     event.stopPropagation();
   };
 
+  const handleCheckboxAreaClick = (event: SyntheticEvent, onToggle: () => void) => {
+    event.stopPropagation();
+    const target = event.target as HTMLElement | null;
+    if (target?.closest?.('[role="checkbox"]')) return;
+    onToggle();
+  };
+
   const toggleSelectAll = (checked?: boolean | "indeterminate") => {
     const visibleRowKeySet = new Set(allVisibleRowKeys);
     const shouldSelect = checked === undefined ? !isAllVisibleRowsSelected : checked !== false;
@@ -1939,7 +2005,7 @@ export default function ContractsPage() {
     ) {
       return "입금확인";
     }
-    if (["환불요청", "환불처리", "환불등록"].includes(raw) || ["refund", "refunded", "refundrequest", "refundrequested"].includes(asciiKey)) {
+    if (["환불", "환불요청", "환불처리", "환불등록"].includes(raw) || ["refund", "refunded", "refundrequest", "refundrequested"].includes(asciiKey)) {
       return "환불요청";
     }
     if (
@@ -1956,7 +2022,8 @@ export default function ContractsPage() {
     return raw;
   }
 
-  function getPaymentMethodDisplayLabel(value: string | null | undefined) {
+  function getPaymentMethodDisplayLabel(value: string | null | undefined, contract?: Contract) {
+    if (isRefundContract(contract)) return "환불";
     return canonicalPaymentMethod(value);
   }
 
@@ -1970,10 +2037,13 @@ export default function ContractsPage() {
   const getContractBaseAmount = (contract: Contract) => {
     const contractItems = getContractDisplayItems(contract).filter((item) => String(item.productName || "").trim());
     if (contractItems.length > 0) {
-      return Math.max(0, contractItems.reduce((sum, item) => sum + calculateSupplyAmount(item), 0));
+      const amount = contractItems.reduce((sum, item) => sum + calculateSupplyAmount(item), 0);
+      return isRefundContract(contract) ? amount : Math.max(0, amount);
     }
 
-    const contractCost = Math.max(0, Number(contract.cost) || 0);
+    const contractCost = isRefundContract(contract)
+      ? Number(contract.cost) || 0
+      : Math.max(0, Number(contract.cost) || 0);
     if (contractCost > 0) {
       return contractCost;
     }
@@ -1997,17 +2067,16 @@ export default function ContractsPage() {
   };
 
   const getContractQuantity = (contract: Contract) => {
-    const addQuantity = Math.max(0, Number(contract.addQuantity) || 0);
-    const extendQuantity = Math.max(0, Number(contract.extendQuantity) || 0);
-    return addQuantity + extendQuantity > 0
-      ? addQuantity + extendQuantity
-      : Math.max(0, Number(contract.quantity) || 0);
+    const quantity = Math.max(0, Number(contract.quantity) || 0);
+    if (quantity > 0) return quantity;
+    return Math.max(0, Number(contract.addQuantity) || 0) + Math.max(0, Number(contract.extendQuantity) || 0);
   };
 
   const getContractWorkCost = (contract: Contract) => {
     const contractItems = getContractDisplayItems(contract).filter((item) => String(item.productName || "").trim());
     if (contractItems.length > 0) {
       const storedWorkCost = contractItems.reduce((sum, item) => sum + calculateWorkCost(item, contract.paymentMethod), 0);
+      if (isRefundContract(contract)) return storedWorkCost || Number(contract.workCost) || 0;
       if (storedWorkCost > 0) return storedWorkCost;
     }
 
@@ -2029,13 +2098,16 @@ export default function ContractsPage() {
       if (computed > 0) return computed;
     }
 
-    return Math.max(0, Number(contract.workCost) || 0);
+    return isRefundContract(contract)
+      ? Number(contract.workCost) || 0
+      : Math.max(0, Number(contract.workCost) || 0);
   };
 
   const getContractVatAmount = (contract: Contract) => {
     const contractItems = getContractDisplayItems(contract).filter((item) => String(item.productName || "").trim());
     if (contractItems.length > 0) {
-      return Math.max(0, contractItems.reduce((sum, item) => sum + calculateVat(item), 0));
+      const vatAmount = contractItems.reduce((sum, item) => sum + calculateVat(item), 0);
+      return isRefundContract(contract) ? vatAmount : Math.max(0, vatAmount);
     }
 
     const issued = parseInvoiceIssued(contract.invoiceIssued);
@@ -2052,7 +2124,8 @@ export default function ContractsPage() {
   };
 
   const getContractSupplyAmount = (contract: Contract) => {
-    return Math.max(0, getContractBaseAmount(contract));
+    const amount = getContractBaseAmount(contract);
+    return isRefundContract(contract) ? amount : Math.max(0, amount);
   };
 
   const getVatDisplayText = (contract: Contract, item?: ProductItem) => {
@@ -2119,6 +2192,7 @@ export default function ContractsPage() {
   };
 
   const getItemOriginalAmount = (item: ProductItem) => {
+    if (isRefundProductItem(item)) return getItemTotalAmount(item);
     return Math.max(0, getItemTotalAmount(item) + getItemRefundAmount(item));
   };
 
@@ -2127,6 +2201,7 @@ export default function ContractsPage() {
   };
 
   const calculateMarginRateFromMarginAmount = (item: ProductItem, marginAmount = getItemMargin(item)) => {
+    if (isRefundProductItem(item)) return 0;
     const baseAmount = getItemOriginalAmount(item) || getItemTotalAmount(item);
     if (baseAmount <= 0) return 0;
     return (marginAmount / baseAmount) * 100;
@@ -2182,6 +2257,8 @@ export default function ContractsPage() {
 
   const totalMargin = productItems.reduce((sum, item) => sum + getItemMargin(item), 0);
   const totalMarginRate = totalSupplyAmount > 0 ? (totalMargin / totalSupplyAmount) * 100 : 0;
+  const stickyToolbarRef = useRef<HTMLDivElement>(null);
+  const [stickyToolbarHeight, setStickyToolbarHeight] = useState(0);
   const selectedSummary = useMemo(() => {
     const cost = selectedRows.reduce((sum, row) => sum + getItemTotalAmount(row.item), 0);
     const workCost = selectedRows.reduce((sum, row) => sum + calculateWorkCost(row.item), 0);
@@ -2205,12 +2282,32 @@ export default function ContractsPage() {
   };
 
   const getContractMarginRate = (contract: Contract) => {
+    if (isRefundContract(contract)) return 0;
     const cost = getContractSupplyAmount(contract);
     if (cost <= 0) return 0;
     return (getContractMargin(contract) / cost) * 100;
   };
 
   const formatPercent = (value: number) => `${value.toFixed(1)}%`;
+
+  useEffect(() => {
+    const toolbar = stickyToolbarRef.current;
+    if (!toolbar) return;
+
+    const updateToolbarHeight = () => {
+      setStickyToolbarHeight(Math.ceil(toolbar.getBoundingClientRect().height));
+    };
+
+    updateToolbarHeight();
+    const resizeObserver = new ResizeObserver(updateToolbarHeight);
+    resizeObserver.observe(toolbar);
+    window.addEventListener("resize", updateToolbarHeight);
+
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", updateToolbarHeight);
+    };
+  }, []);
 
   const getPaymentMethodTextClassName = (paymentMethod: string | null | undefined) => {
     const normalized = canonicalPaymentMethod(paymentMethod);
@@ -2220,6 +2317,26 @@ export default function ContractsPage() {
     if (normalized === "입금 전") return "text-amber-600 font-medium";
     return "text-foreground";
   };
+
+  const refundSourceContractSummary = refundContract
+    ? {
+        contractId: refundContract.id,
+        itemId: refundTargetItem?.id || "-",
+        contractNumber: refundContract.contractNumber || "-",
+        contractDate: formatDate(refundContract.contractDate),
+        customerName: refundContract.customerName || "-",
+        managerName: refundContract.managerName || "-",
+        productName: refundTargetItem?.productName || refundContract.products || "-",
+        userIdentifier: refundTargetItem?.userIdentifier || refundContract.userIdentifier || "-",
+        quantity: refundTargetItem ? getItemQuantity(refundTargetItem) : getContractQuantity(refundContract),
+        days: refundTargetItem ? Math.abs(getEffectiveDays(refundTargetItem)) : Math.abs(Number(refundContract.days) || 0),
+        amount: refundTargetAmount,
+      }
+    : null;
+
+  const contractsTableViewportMaxHeight = stickyToolbarHeight > 0
+    ? `calc(100vh - ${stickyToolbarHeight + 96}px)`
+    : "calc(100vh - 320px)";
 
   const productNameOptions = useMemo(() => {
     return Array.from(
@@ -2233,6 +2350,11 @@ export default function ContractsPage() {
 
   return (
     <div className="p-6 space-y-4">
+      <div
+        ref={stickyToolbarRef}
+        className="sticky top-0 z-30 -mx-6 -mt-6 space-y-4 border-b border-border/80 bg-background/95 px-6 pb-4 pt-6 backdrop-blur supports-[backdrop-filter]:bg-background/75"
+        data-testid="contracts-sticky-toolbar"
+      >
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -2290,7 +2412,7 @@ export default function ContractsPage() {
             variant="outline"
             className="rounded-none"
             onClick={handleRefundOpen}
-            disabled={!singleSelectedRow}
+            disabled={!singleSelectedRow || isRefundContract(singleSelectedRow.contract)}
             data-testid="button-refund"
           >
             <Undo2 className="w-4 h-4 mr-1" />
@@ -2320,6 +2442,9 @@ export default function ContractsPage() {
             >
               <DialogHeader className="space-y-1 border-b pb-3">
                 <DialogTitle>{createDialogMode === "copy" ? "계약 복사 등록" : "계약 등록"}</DialogTitle>
+                <DialogDescription className="sr-only">
+                  계약 기본 정보와 상품 항목을 입력해 계약을 등록합니다.
+                </DialogDescription>
               </DialogHeader>
               <div className={contractDialogBodyClassName}>
                 <div className="grid gap-3 lg:max-w-[760px] lg:grid-cols-[180px_280px_220px] lg:items-end">
@@ -2376,7 +2501,7 @@ export default function ContractsPage() {
                   <Label className="text-sm font-medium">상품 정보</Label>
                   <div className="overflow-x-auto rounded-none border bg-white">
                     <div className={productRowsViewportClassName}>
-                    <Table className="table-fixed w-full min-w-[1360px]">
+                    <Table className="table-fixed w-full min-w-[1300px]">
                       <TableHeader className="sticky top-0 z-10 bg-white">
                         <TableRow className="bg-muted/30">
                           <TableHead className="w-6 px-1"></TableHead>
@@ -2384,8 +2509,7 @@ export default function ContractsPage() {
                           <TableHead className="px-1 py-1 text-left text-xs font-medium" style={{ width: "130px" }}>사용자ID</TableHead>
                           <TableHead className="px-1 py-1 text-left text-xs font-medium" style={{ width: "82px" }}>단가</TableHead>
                           <TableHead className="px-1 py-1 text-left text-xs font-medium" style={{ width: "58px" }}>일수</TableHead>
-                          <TableHead className="px-1 py-1 text-left text-xs font-medium" style={{ width: "58px" }}>추가</TableHead>
-                          <TableHead className="px-1 py-1 text-left text-xs font-medium" style={{ width: "58px" }}>연장</TableHead>
+                          <TableHead className="px-1 py-1 text-left text-xs font-medium" style={{ width: "66px" }}>수량</TableHead>
                           <TableHead className="px-1 py-1 text-left text-xs font-medium" style={{ width: "88px" }}>작업비</TableHead>
                           <TableHead className="px-1 py-1 text-left text-xs font-medium" style={{ width: "86px" }}>작업자</TableHead>
                           <TableHead className="px-1 py-1 text-left text-xs font-medium" style={{ width: "72px" }}>수정</TableHead>
@@ -2447,23 +2571,12 @@ export default function ContractsPage() {
                             <TableCell className="px-1 py-1.5">
                                 <Input
                                   type="number"
-                                  value={getProductItemNumericInputValue(item, "addQuantity")}
-                                  onChange={(e) => handleProductItemNumericInputChange(item, "addQuantity", e.target.value)}
-                                  onBlur={() => handleProductItemNumericInputBlur(item, "addQuantity", 0)}
+                                  value={getProductItemNumericInputValue(item, "quantity")}
+                                  onChange={(e) => handleProductItemNumericInputChange(item, "quantity", e.target.value)}
+                                  onBlur={() => handleProductItemNumericInputBlur(item, "quantity", 0)}
                                   className="rounded-none h-8 w-full text-left"
                                   min="0"
-                                  data-testid={`input-add-quantity-${item.id}`}
-                              />
-                            </TableCell>
-                            <TableCell className="px-1 py-1.5">
-                                <Input
-                                  type="number"
-                                  value={getProductItemNumericInputValue(item, "extendQuantity")}
-                                  onChange={(e) => handleProductItemNumericInputChange(item, "extendQuantity", e.target.value)}
-                                  onBlur={() => handleProductItemNumericInputBlur(item, "extendQuantity", 0)}
-                                  className="rounded-none h-8 w-full text-left"
-                                  min="0"
-                                  data-testid={`input-extend-quantity-${item.id}`}
+                                  data-testid={`input-quantity-${item.id}`}
                               />
                             </TableCell>
                             <TableCell className="px-1 py-1.5 align-middle">
@@ -2619,13 +2732,13 @@ export default function ContractsPage() {
                       </div>
                     </div>
 
-                    <div className="w-full max-w-[320px] space-y-1">
+                    <div className="w-full max-w-[640px] space-y-1">
                       <Label className="text-xs">비고</Label>
                       <Textarea
-                        rows={3}
+                        rows={6}
                         value={formData.notes || ""}
                         onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                        className="min-h-[78px] rounded-none text-sm resize-none"
+                        className="min-h-[156px] rounded-none text-sm resize-none"
                         placeholder="비고 입력"
                         data-testid="input-notes"
                       />
@@ -2663,9 +2776,21 @@ export default function ContractsPage() {
             >
               <DialogHeader className="space-y-1 border-b pb-3">
                 <DialogTitle>{isEditReadOnly ? "계약 상세" : "계약 수정"}</DialogTitle>
+                <DialogDescription className="sr-only">
+                  계약 상세 정보와 상품 항목을 확인하거나 수정합니다.
+                </DialogDescription>
               </DialogHeader>
               <div className={contractDialogBodyClassName}>
-                <div className="grid gap-3 lg:max-w-[760px] lg:grid-cols-[180px_280px_220px] lg:items-end">
+                <div className="grid gap-3 lg:max-w-[960px] lg:grid-cols-[190px_180px_280px_220px] lg:items-end">
+                  <div className="space-y-1">
+                    <Label className="text-xs">계약번호</Label>
+                    <Input
+                      value={formData.contractNumber || ""}
+                      readOnly
+                      className="h-8 rounded-none bg-muted/40 text-sm font-medium"
+                      data-testid="edit-input-contract-number"
+                    />
+                  </div>
                   <div className="space-y-1">
                     <Label className="text-xs">계약일</Label>
                     <Input
@@ -2721,16 +2846,14 @@ export default function ContractsPage() {
                   <Label className="text-sm font-medium">상품 정보</Label>
                 <div className="overflow-x-auto rounded-none border bg-white">
                     <div className={productRowsViewportClassName}>
-                    <table className="w-full min-w-[1360px] table-fixed">
+                    <table className="w-full min-w-[1300px] table-fixed">
                       <thead className="sticky top-0 z-10 bg-muted/30">
                         <tr>
-                          <th className="px-1.5 py-1.5 text-left text-xs font-medium w-12"></th>
                           <th className="px-1 py-1 text-left text-xs font-medium w-[165px]">상품명</th>
                           <th className="px-1 py-1 text-left text-xs font-medium w-[130px]">사용자ID</th>
                           <th className="px-1 py-1 text-right text-xs font-medium w-[82px]">단가</th>
                           <th className="px-1 py-1 text-right text-xs font-medium w-[58px]">일수</th>
-                          <th className="px-1 py-1 text-right text-xs font-medium w-[58px]">추가</th>
-                          <th className="px-1 py-1 text-right text-xs font-medium w-[58px]">연장</th>
+                          <th className="px-1 py-1 text-right text-xs font-medium w-[66px]">수량</th>
                           <th className="px-1 py-1 text-right text-xs font-medium w-[88px]">작업비</th>
                           <th className="px-1 py-1 text-left text-xs font-medium w-[86px]">작업자</th>
                           <th className="px-1 py-1 text-center text-xs font-medium w-[72px]">수정</th>
@@ -2739,24 +2862,12 @@ export default function ContractsPage() {
                           <th className="px-1 py-1 text-right text-xs font-medium w-[84px]">마진</th>
                           <th className="px-1 py-1 text-right text-xs font-medium w-[74px]">마진율</th>
                           <th className="px-1 py-1 text-left text-xs font-medium w-[92px]">부가세구분</th>
+                          <th className="px-1.5 py-1.5 text-center text-xs font-medium w-12"></th>
                         </tr>
                       </thead>
                       <tbody>
                         {productItems.map((item, index) => (
                           <tr key={item.id} className="border-t">
-                            <td className="p-1.5">
-                              {productItems.length > 1 && (
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="rounded-none h-6 w-6"
-                                  onClick={() => removeProductItem(item.id)}
-                                  disabled={isEditReadOnly}
-                                >
-                                  <Trash2 className="w-3 h-3" />
-                                </Button>
-                              )}
-                            </td>
                             <td className="p-1.5">
                               <AutocompleteInput
                                 value={item.productName}
@@ -2806,24 +2917,12 @@ export default function ContractsPage() {
                             <td className="p-1.5 text-right">
                               <Input
                                 type="number"
-                                value={getProductItemNumericInputValue(item, "addQuantity")}
-                                onChange={(e) => handleProductItemNumericInputChange(item, "addQuantity", e.target.value)}
-                                onBlur={() => handleProductItemNumericInputBlur(item, "addQuantity", 0)}
+                                value={getProductItemNumericInputValue(item, "quantity")}
+                                onChange={(e) => handleProductItemNumericInputChange(item, "quantity", e.target.value)}
+                                onBlur={() => handleProductItemNumericInputBlur(item, "quantity", 0)}
                                 className="rounded-none h-8 text-right text-sm w-16"
                                 min="0"
-                                data-testid={`edit-input-add-quantity-${index}`}
-                                disabled={isEditReadOnly}
-                              />
-                            </td>
-                            <td className="p-1.5 text-right">
-                              <Input
-                                type="number"
-                                value={getProductItemNumericInputValue(item, "extendQuantity")}
-                                onChange={(e) => handleProductItemNumericInputChange(item, "extendQuantity", e.target.value)}
-                                onBlur={() => handleProductItemNumericInputBlur(item, "extendQuantity", 0)}
-                                className="rounded-none h-8 text-right text-sm w-16"
-                                min="0"
-                                data-testid={`edit-input-extend-quantity-${index}`}
+                                data-testid={`edit-input-quantity-${index}`}
                                 disabled={isEditReadOnly}
                               />
                             </td>
@@ -2884,6 +2983,20 @@ export default function ContractsPage() {
                                   <SelectItem value="미포함">미포함</SelectItem>
                                 </SelectContent>
                               </Select>
+                            </td>
+                            <td className="p-1.5 text-center">
+                              {productItems.length > 1 && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="rounded-none h-6 w-6"
+                                  onClick={() => removeProductItem(item.id)}
+                                  disabled={isEditReadOnly}
+                                  data-testid={`edit-button-remove-product-${index}`}
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </Button>
+                              )}
                             </td>
                           </tr>
                         ))}
@@ -2978,13 +3091,13 @@ export default function ContractsPage() {
                       </div>
                     </div>
 
-                    <div className="w-full max-w-[320px] space-y-1">
+                    <div className="w-full max-w-[640px] space-y-1">
                       <Label className="text-xs">비고</Label>
                       <Textarea
-                        rows={3}
+                        rows={6}
                         value={formData.notes || ""}
                         onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                        className="min-h-[78px] rounded-none text-sm resize-none"
+                        className="min-h-[156px] rounded-none text-sm resize-none"
                         placeholder="비고 입력"
                         data-testid="edit-input-notes"
                         disabled={isEditReadOnly}
@@ -3114,15 +3227,7 @@ export default function ContractsPage() {
         </Button>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-none border bg-muted/20 px-3 py-2">
-        <div className="flex items-center gap-2 text-sm">
-          <Checkbox
-            checked={keepSelectionAcrossPages}
-            onCheckedChange={(checked) => setKeepSelectionAcrossPages(checked === true)}
-            data-testid="checkbox-keep-selection"
-          />
-          <span className="text-muted-foreground">페이지 이동 시 선택 유지</span>
-        </div>
+      <div className="flex flex-wrap items-center justify-end gap-3 rounded-none border bg-muted/20 px-3 py-2">
         {selectedSummary.rowCount > 0 ? (
           <div className="flex flex-wrap items-center gap-4 text-sm">
             <span className="font-medium">
@@ -3137,6 +3242,7 @@ export default function ContractsPage() {
               variant="ghost"
               size="sm"
               className="h-7 rounded-none px-2 text-xs"
+              data-testid="button-clear-selection"
               onClick={() => {
                 setSelectedItems([]);
                 setSelectedRowMap({});
@@ -3151,19 +3257,35 @@ export default function ContractsPage() {
           </span>
         )}
       </div>
+      </div>
 
       {/* Table */}
-      <Card className="rounded-none border">
+      <Card className="overflow-hidden rounded-none border">
         <CardContent className="p-0">
-          <Table>
-            <TableHeader>
+          <Table
+            wrapperClassName="overflow-auto"
+            wrapperStyle={{ maxHeight: contractsTableViewportMaxHeight }}
+          >
+            <TableHeader
+              className="sticky top-0 z-20 bg-card/95 backdrop-blur"
+              data-testid="contracts-sticky-table-header"
+            >
               <TableRow className="bg-muted/30">
-                <TableHead className="w-12">
-                  <Checkbox
-                    checked={isAllVisibleRowsSelected}
-                    onCheckedChange={toggleSelectAll}
-                    data-testid="checkbox-select-all"
-                  />
+                <TableHead className="w-12 p-0">
+                  <div
+                    className="flex h-12 w-12 cursor-pointer items-center justify-center"
+                    onClick={(event) => handleCheckboxAreaClick(event, () => toggleSelectAll())}
+                    onPointerDown={stopSelectionEventPropagation}
+                    title="보이는 항목 전체 선택"
+                    data-testid="checkbox-select-all-hit-area"
+                  >
+                    <Checkbox
+                      checked={isAllVisibleRowsSelected}
+                      onCheckedChange={toggleSelectAll}
+                      onClick={stopSelectionEventPropagation}
+                      data-testid="checkbox-select-all"
+                    />
+                  </div>
                 </TableHead>
                 <TableHead className="text-xs font-medium whitespace-nowrap">
                   <div className="flex items-center gap-1">
@@ -3213,8 +3335,7 @@ export default function ContractsPage() {
                 <TableHead className="text-xs font-medium whitespace-nowrap">사용자ID</TableHead>
                 <TableHead className="text-xs font-medium whitespace-nowrap">상품</TableHead>
                 <TableHead className="text-xs font-medium text-center whitespace-nowrap">일수</TableHead>
-                <TableHead className="text-xs font-medium text-center whitespace-nowrap">추가</TableHead>
-                <TableHead className="text-xs font-medium text-center whitespace-nowrap">연장</TableHead>
+                <TableHead className="text-xs font-medium text-center whitespace-nowrap">수량</TableHead>
                 <TableHead className="text-xs font-medium text-right whitespace-nowrap">공급가액</TableHead>
                 <TableHead className="text-xs font-medium whitespace-nowrap">담당자</TableHead>
                 <TableHead className="text-xs font-medium text-center whitespace-nowrap">결제확인</TableHead>
@@ -3247,14 +3368,17 @@ export default function ContractsPage() {
                 contractRows.map(({ rowKey, contract, item, itemIndex }) => (
                   <TableRow
                     key={rowKey}
-                    className="hover:bg-muted/20 cursor-pointer"
+                    className={`hover:bg-muted/20 cursor-pointer ${isRefundContract(contract) ? "bg-red-50/70 text-red-950" : ""}`}
                     data-testid={itemIndex === 0 ? `row-contract-${contract.id}` : `row-contract-${contract.id}-${itemIndex}`}
                     onClick={() => openContractDialog(contract, "edit")}
                   >
-                    <TableCell className="align-top">
+                    <TableCell className="w-12 p-0 align-top">
                       <div
-                        onClick={stopSelectionEventPropagation}
+                        className="flex min-h-12 w-12 cursor-pointer items-center justify-center py-3"
+                        onClick={(event) => handleCheckboxAreaClick(event, () => toggleSelectItem(rowKey))}
                         onPointerDown={stopSelectionEventPropagation}
+                        title="항목 선택"
+                        data-testid={`checkbox-hit-area-${contract.id}-${itemIndex}`}
                       >
                         <Checkbox
                           checked={selectedItems.includes(rowKey)}
@@ -3273,8 +3397,7 @@ export default function ContractsPage() {
                     <TableCell className="text-xs whitespace-nowrap">{item.userIdentifier || "-"}</TableCell>
                     <TableCell className="text-xs max-w-[190px] break-all">{item.productName || "-"}</TableCell>
                     <TableCell className="text-xs text-center whitespace-nowrap">{getEffectiveDays(item)}</TableCell>
-                    <TableCell className="text-xs text-center whitespace-nowrap">{item.addQuantity || 0}</TableCell>
-                    <TableCell className="text-xs text-center whitespace-nowrap">{item.extendQuantity || 0}</TableCell>
+                    <TableCell className="text-xs text-center whitespace-nowrap">{getItemQuantity(item)}</TableCell>
                     <TableCell className="text-xs text-right whitespace-nowrap">
                       <span>{formatCurrency(getItemOriginalAmount(item))}</span>
                     </TableCell>
@@ -3286,7 +3409,7 @@ export default function ContractsPage() {
                       data-testid={`text-payment-method-${contract.id}-${itemIndex}`}
                     >
                       {(() => {
-                        const paymentLabel = getPaymentMethodDisplayLabel(contract.paymentMethod) || "-";
+                        const paymentLabel = getPaymentMethodDisplayLabel(contract.paymentMethod, contract) || "-";
                         const paymentAmount = getPaymentMethodDisplayAmount(contract, item);
                         return (
                           <div className="flex flex-col items-center leading-tight">
@@ -3470,12 +3593,85 @@ export default function ContractsPage() {
           setRefundReason("");
         }
       }}>
-        <DialogContent className="rounded-none max-w-[700px]">
+        <DialogContent className="rounded-none max-w-[820px]">
           <DialogHeader>
             <DialogTitle>환불 등록</DialogTitle>
+            <DialogDescription className="sr-only">
+              선택한 원계약 정보를 확인하고 환불 계약을 등록합니다.
+            </DialogDescription>
           </DialogHeader>
           {refundContract && (
             <div className="space-y-4">
+              {refundSourceContractSummary && (
+                <div
+                  className="space-y-3 rounded-none border bg-muted/20 p-4"
+                  data-testid="refund-source-contract-panel"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="text-sm font-semibold">원계약 확인</h3>
+                    <span
+                      className="text-xs text-muted-foreground"
+                      data-testid="text-refund-source-contract-id"
+                    >
+                      계약ID {refundSourceContractSummary.contractId}
+                    </span>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    <div>
+                      <span className="text-xs text-muted-foreground">원계약번호</span>
+                      <p
+                        className="break-all font-mono text-sm font-medium"
+                        data-testid="text-refund-source-contract-number"
+                      >
+                        {refundSourceContractSummary.contractNumber}
+                      </p>
+                    </div>
+                    <div>
+                      <span className="text-xs text-muted-foreground">원계약일</span>
+                      <p className="text-sm font-medium" data-testid="text-refund-source-contract-date">
+                        {refundSourceContractSummary.contractDate}
+                      </p>
+                    </div>
+                    <div>
+                      <span className="text-xs text-muted-foreground">고객 / 담당자</span>
+                      <p className="text-sm font-medium" data-testid="text-refund-source-customer-manager">
+                        {refundSourceContractSummary.customerName} / {refundSourceContractSummary.managerName}
+                      </p>
+                    </div>
+                    <div>
+                      <span className="text-xs text-muted-foreground">선택 항목 금액</span>
+                      <p className="text-sm font-medium" data-testid="text-refund-source-amount">
+                        {formatCurrency(refundSourceContractSummary.amount)}원
+                      </p>
+                    </div>
+                    <div>
+                      <span className="text-xs text-muted-foreground">원상품</span>
+                      <p className="break-all text-sm font-medium" data-testid="text-refund-source-product">
+                        {refundSourceContractSummary.productName}
+                      </p>
+                    </div>
+                    <div>
+                      <span className="text-xs text-muted-foreground">사용자ID</span>
+                      <p className="break-all text-sm font-medium" data-testid="text-refund-source-user-id">
+                        {refundSourceContractSummary.userIdentifier}
+                      </p>
+                    </div>
+                    <div>
+                      <span className="text-xs text-muted-foreground">원 수량 / 일수</span>
+                      <p className="text-sm font-medium" data-testid="text-refund-source-quantity-days">
+                        {refundSourceContractSummary.quantity}개 / {refundSourceContractSummary.days}일
+                      </p>
+                    </div>
+                    <div>
+                      <span className="text-xs text-muted-foreground">원항목ID</span>
+                      <p className="break-all font-mono text-sm font-medium" data-testid="text-refund-source-item-id">
+                        {refundSourceContractSummary.itemId}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div className="grid grid-cols-3 gap-4 p-4 bg-muted/30 border rounded-none">
                 <div>
                   <span className="text-sm text-muted-foreground">계약일</span>
@@ -3615,11 +3811,11 @@ export default function ContractsPage() {
                   disabled={refundMutation.isPending || refundAmount <= 0}
                   data-testid="button-refund-submit"
                 >
-                  {refundMutation.isPending ? "등록 중..." : "환불관리로 보내기"}
+                  {refundMutation.isPending ? "등록 중..." : "계약관리 환불 등록"}
                 </Button>
               </div>
 
-              {refundHistory.length > 0 && (
+              {combinedRefundHistoryRows.length > 0 && (
                 <div className="space-y-2 pt-4 border-t">
                   <h3 className="text-sm font-semibold">환불 내역</h3>
                   <div className="border rounded-none">
@@ -3634,10 +3830,11 @@ export default function ContractsPage() {
                           <TableHead className="text-xs">상품</TableHead>
                           <TableHead className="text-xs">작업자</TableHead>
                           <TableHead className="text-xs">사유</TableHead>
+                          <TableHead className="text-xs">표시 위치</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {refundHistory.map((refund) => (
+                        {combinedRefundHistoryRows.map((refund) => (
                           <TableRow key={refund.id} data-testid={`row-refund-${refund.id}`}>
                             <TableCell className="text-xs">
                               {format(new Date(refund.refundDate), "yyyy-MM-dd HH:mm", { locale: ko })}
@@ -3651,6 +3848,7 @@ export default function ContractsPage() {
                             <TableCell className="text-xs">{refund.slot || "-"}</TableCell>
                             <TableCell className="text-xs">{refund.worker || "-"}</TableCell>
                             <TableCell className="text-xs">{refund.reason || "-"}</TableCell>
+                            <TableCell className="text-xs">{refund.source}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>

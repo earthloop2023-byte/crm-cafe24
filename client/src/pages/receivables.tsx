@@ -12,275 +12,101 @@ import { AlertCircle, Search, Download, Filter, Calendar as CalendarIcon, Refres
 import { Pagination } from "@/components/pagination";
 import { format } from "date-fns";
 import { ko } from "date-fns/locale";
-import type { Contract, Product, ProductRateHistory } from "@shared/schema";
-import { getKoreanStartOfYear, getKoreanEndOfDay, getKoreanDateKey } from "@/lib/korean-time";
+import * as XLSX from "xlsx";
+import type { Contract, Deposit } from "@shared/schema";
+import { getKoreanDateKey, getKoreanEndOfDay, getKoreanStartOfYear } from "@/lib/korean-time";
 import { useSettings } from "@/lib/settings";
 import { useToast } from "@/hooks/use-toast";
-import * as XLSX from "xlsx";
 import { matchesKoreanSearch } from "@shared/korean-search";
 
-type ProductItem = {
-  id: string;
-  productName: string;
-  userIdentifier: string;
-  vatType: string;
-  unitPrice: number;
-  days: number;
-  addQuantity: number;
-  extendQuantity: number;
-  quantity: number;
-  baseDays: number;
-  worker: string;
-  workCost: number;
-};
+type ReceivableStatus = "미수" | "초과/환불확인";
 
 type ReceivableRow = {
   rowKey: string;
+  status: ReceivableStatus;
   contract: Contract;
-  item: ProductItem;
-  itemIndex: number;
-  receivableAmount: number;
+  contractAmount: number;
+  mappedAmount: number;
+  customerTotalAmount: number;
+  customerConfirmedAmount: number;
+  customerDifferenceAmount: number;
+  reason: string;
 };
+
+const CONTRACT_TYPE_REFUND = "refund";
+const PAYMENT_METHOD_DEPOSIT_CONFIRMED = "입금확인";
 
 const normalizeText = (value: unknown) => String(value ?? "").trim();
-const toNonNegativeInt = (value: unknown) => Math.max(0, Math.round(Number(value) || 0));
-const formatAmount = (amount: number) => new Intl.NumberFormat("ko-KR").format(Math.round(amount || 0));
+const normalizeCompactText = (value: unknown) => normalizeText(value).replace(/\s+/g, "");
+const formatAmount = (amount: number) => new Intl.NumberFormat("ko-KR").format(Math.round(Math.abs(amount || 0)));
+const signedFormatAmount = (amount: number) => `${amount < 0 ? "-" : ""}${formatAmount(amount)}`;
 
-const receivableBankMethods = new Set(["하나", "국민"]);
-const excludedPaymentMethods = new Set(["적립", "적립금", "적립금사용"]);
-
-const splitStoredListValue = (value: string | null | undefined) =>
-  String(value || "")
-    .split(",")
-    .map((entry) => entry.trim());
-
-const normalizeVatType = (vat: string | null | undefined) => {
-  const normalized = String(vat || "").replace(/\s+/g, "");
-  if (!normalized) return "미포함";
-  if (["부가세별도", "별도", "미포함", "면세"].includes(normalized)) return "미포함";
-  if (["부가세포함", "포함"].includes(normalized)) return "포함";
-  return "미포함";
-};
-
-const parseInvoiceIssued = (value: string | null | undefined): boolean | null => {
-  const normalized = normalizeText(value).replace(/\s+/g, "").toLowerCase();
-  if (!normalized) return null;
-  const includeValues = ["true", "1", "y", "yes", "o", "발행", "발급", "포함", "부가세포함"];
-  const excludeValues = ["false", "0", "n", "no", "x", "미발행", "미발급", "미포함", "별도", "부가세별도", "면세"];
-  if (includeValues.includes(normalized)) return true;
-  if (excludeValues.includes(normalized)) return false;
-  return null;
-};
-
-const inferBaseAmountFromTotalWithVat = (totalAmount: number) => {
-  const safeTotalAmount = Math.max(0, Math.round(Number(totalAmount) || 0));
-  if (safeTotalAmount <= 0) return 0;
-  const approx = Math.round(safeTotalAmount / 1.1);
-  for (let delta = -20; delta <= 20; delta += 1) {
-    const candidate = approx + delta;
-    if (candidate < 0) continue;
-    if (candidate + Math.round(candidate * 0.1) === safeTotalAmount) {
-      return candidate;
-    }
+function normalizePaymentMethod(value: unknown) {
+  const normalized = normalizeCompactText(value);
+  const asciiKey = normalized.replace(/[_-]/g, "").toLowerCase();
+  if (
+    normalized === PAYMENT_METHOD_DEPOSIT_CONFIRMED ||
+    normalized === "입금완료" ||
+    normalized === "하나" ||
+    normalized === "하나은행" ||
+    normalized === "국민" ||
+    normalized === "국민은행" ||
+    normalized === "농협" ||
+    normalized === "농협은행" ||
+    normalized === "크몽" ||
+    ["deposit", "deposited", "confirmed", "banktransfer", "transfer", "hana", "hanabank", "kb", "kookmin", "nonghyup", "nh", "kmong"].includes(asciiKey)
+  ) {
+    return PAYMENT_METHOD_DEPOSIT_CONFIRMED;
   }
-  return approx;
-};
+  return normalized;
+}
 
-const getItemQuantity = (item: ProductItem) =>
-  Math.max(1, toNonNegativeInt(item.quantity) || toNonNegativeInt(item.addQuantity) + toNonNegativeInt(item.extendQuantity) || 1);
+function isRefundContract(contract: Contract) {
+  return normalizeText((contract as Contract & { contractType?: string | null }).contractType) === CONTRACT_TYPE_REFUND ||
+    (Number(contract.cost) || 0) < 0;
+}
 
-const calculateSupplyAmount = (item: ProductItem) => Math.max(0, Number(item.unitPrice) || 0) * getItemQuantity(item);
-const calculateVat = (item: ProductItem) => (normalizeVatType(item.vatType) === "포함" ? Math.round(calculateSupplyAmount(item) * 0.1) : 0);
-const getItemTotalAmount = (item: ProductItem) => calculateSupplyAmount(item) + calculateVat(item);
+function getSignedContractAmount(contract: Contract) {
+  return Math.round(Number(contract.cost) || 0);
+}
 
-const buildProductHistoryMap = (histories: ProductRateHistory[]) => {
-  const map = new Map<string, ProductRateHistory[]>();
-  for (const history of histories) {
-    const key = normalizeText(history.productName);
-    if (!key) continue;
-    if (!map.has(key)) map.set(key, []);
-    map.get(key)!.push(history);
+function getPositiveContractAmount(contract: Contract) {
+  return Math.max(0, getSignedContractAmount(contract));
+}
+
+function isDepositConfirmedContract(contract: Contract) {
+  return contract.paymentConfirmed === true || normalizePaymentMethod(contract.paymentMethod) === PAYMENT_METHOD_DEPOSIT_CONFIRMED;
+}
+
+function getDepositAmount(deposit: Deposit | null | undefined) {
+  if (!deposit) return 0;
+  const confirmedAmount = Math.max(0, Math.round(Number(deposit.confirmedAmount) || 0));
+  if (confirmedAmount > 0) return confirmedAmount;
+  return Math.max(0, Math.round(Number(deposit.depositAmount) || 0));
+}
+
+function isConfirmedDeposit(deposit: Deposit | null | undefined) {
+  if (!deposit) return false;
+  return Boolean(deposit.confirmedAt || getDepositAmount(deposit) > 0 || deposit.contractId);
+}
+
+function getContractConfirmedAmount(contract: Contract, linkedDeposit: Deposit | undefined) {
+  if (isRefundContract(contract)) return 0;
+  if (isConfirmedDeposit(linkedDeposit)) return getDepositAmount(linkedDeposit);
+  return isDepositConfirmedContract(contract) ? getPositiveContractAmount(contract) : 0;
+}
+
+function getRowAmountClassName(amount: number) {
+  if (amount < 0) return "text-blue-600";
+  return "text-red-600";
+}
+
+function getStatusClassName(status: ReceivableStatus) {
+  if (status === "초과/환불확인") {
+    return "inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700";
   }
-  Array.from(map.values()).forEach((list) => {
-    list.sort((a, b) => {
-      const effectiveDiff = new Date(b.effectiveFrom).getTime() - new Date(a.effectiveFrom).getTime();
-      if (effectiveDiff !== 0) return effectiveDiff;
-      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-    });
-  });
-  return map;
-};
-
-const buildProductMap = (products: Product[]) => {
-  const map = new Map<string, Product>();
-  products.forEach((product) => {
-    const key = normalizeText(product.name);
-    if (key) map.set(key, product);
-  });
-  return map;
-};
-
-const resolveProductSnapshotAtDate = (
-  productName: string,
-  contractDate: Date | string | null | undefined,
-  productMap: Map<string, Product>,
-  productHistoryMap: Map<string, ProductRateHistory[]>,
-) => {
-  const normalizedName = normalizeText(productName);
-  if (!normalizedName) return undefined;
-  const historyList = productHistoryMap.get(normalizedName) || [];
-  if (historyList.length > 0) {
-    const contractTime = contractDate ? new Date(contractDate).getTime() : Number.NaN;
-    if (!Number.isNaN(contractTime)) {
-      const matched = historyList.find((history) => new Date(history.effectiveFrom).getTime() <= contractTime);
-      if (matched) return matched;
-      return historyList[historyList.length - 1];
-    }
-    return historyList[0];
-  }
-  return productMap.get(normalizedName);
-};
-
-const isViralCategory = (category: string | null | undefined) => (category ?? "").replace(/\s+/g, "") === "바이럴상품";
-
-const createFallbackItem = (contract: Contract): ProductItem => ({
-  id: "1",
-  productName: normalizeText(contract.products) || "-",
-  userIdentifier: normalizeText(contract.userIdentifier),
-  vatType: parseInvoiceIssued(contract.invoiceIssued) === true ? "포함" : "미포함",
-  unitPrice: Math.max(0, Number(contract.cost) || 0),
-  days: Math.max(1, Number(contract.days) || 1),
-  addQuantity: toNonNegativeInt(contract.addQuantity),
-  extendQuantity: toNonNegativeInt(contract.extendQuantity),
-  quantity: Math.max(1, Number(contract.quantity) || toNonNegativeInt(contract.addQuantity) + toNonNegativeInt(contract.extendQuantity) || 1),
-  baseDays: Math.max(1, Number(contract.days) || 1),
-  worker: normalizeText(contract.worker),
-  workCost: Math.max(0, Number(contract.workCost) || 0),
-});
-
-const parseStoredProductItems = (
-  contract: Contract,
-  products: Product[],
-  productRateHistories: ProductRateHistory[],
-): ProductItem[] => {
-  const productMap = buildProductMap(products);
-  const productHistoryMap = buildProductHistoryMap(productRateHistories);
-  const rawJson = normalizeText(contract.productDetailsJson);
-
-  if (rawJson) {
-    try {
-      const parsed = JSON.parse(rawJson);
-      if (Array.isArray(parsed)) {
-        const hydrated = parsed
-          .filter((item): item is Record<string, unknown> => !!item && typeof item === "object")
-          .map((item, index) => {
-            const productName = normalizeText(item.productName);
-            if (!productName) return null;
-            const product = productMap.get(productName);
-            const snapshot = resolveProductSnapshotAtDate(productName, contract.contractDate, productMap, productHistoryMap);
-            const viralProduct = isViralCategory(product?.category);
-            const baseDays = viralProduct
-              ? 1
-              : Math.max(1, Number(item.baseDays) || 0, Number(snapshot?.baseDays ?? product?.baseDays) || 0, 1);
-            const addQuantity = toNonNegativeInt(item.addQuantity);
-            const extendQuantity = toNonNegativeInt(item.extendQuantity);
-            return {
-              id: normalizeText(item.id) || String(index + 1),
-              productName,
-              userIdentifier: normalizeText(item.userIdentifier),
-              vatType: normalizeVatType(String(item.vatType ?? snapshot?.vatType ?? product?.vatType ?? "")),
-              unitPrice: Math.max(0, Number(item.unitPrice) || 0),
-              days: viralProduct ? 1 : Math.max(1, Number(item.days) || baseDays || 1),
-              addQuantity,
-              extendQuantity,
-              quantity: Math.max(1, Number(item.quantity) || addQuantity + extendQuantity || 1),
-              baseDays,
-              worker: normalizeText(item.worker ?? snapshot?.worker ?? product?.worker),
-              workCost: Math.max(0, Number(item.workCost) || Number(snapshot?.workCost ?? product?.workCost) || 0),
-            } satisfies ProductItem;
-          })
-          .filter((item): item is ProductItem => !!item);
-
-        if (hydrated.length > 0) {
-          return hydrated;
-        }
-      }
-    } catch {}
-  }
-
-  const productNames = splitStoredListValue(contract.products).filter(Boolean);
-  const userIdentifiers = splitStoredListValue(contract.userIdentifier);
-  const workerNames = splitStoredListValue(contract.worker);
-
-  if (productNames.length === 0) {
-    return [createFallbackItem(contract)];
-  }
-
-  const invoiceIssuedFlag = parseInvoiceIssued(contract.invoiceIssued);
-  const contractVatType = invoiceIssuedFlag === null ? null : invoiceIssuedFlag ? "포함" : "미포함";
-  const totalContractCost = Math.max(0, Number(contract.cost) || 0);
-  const derivedBaseAmount = invoiceIssuedFlag === true ? inferBaseAmountFromTotalWithVat(totalContractCost) : totalContractCost;
-
-  const baseItems = productNames.map((name, index) => {
-    const product = productMap.get(name);
-    const snapshot = resolveProductSnapshotAtDate(name, contract.contractDate, productMap, productHistoryMap);
-    const viralProduct = isViralCategory(product?.category);
-    const addQuantity = productNames.length === 1 ? toNonNegativeInt(contract.addQuantity) : 0;
-    const extendQuantity = productNames.length === 1 ? toNonNegativeInt(contract.extendQuantity) : 0;
-    const quantity = productNames.length === 1
-      ? Math.max(1, Number(contract.quantity) || addQuantity + extendQuantity || 1)
-      : 1;
-    const baseDays = viralProduct
-      ? 1
-      : Math.max(1, Number(snapshot?.baseDays ?? product?.baseDays) || Number(contract.days) || 1, 1);
-
-    return {
-      id: String(index + 1),
-      productName: name,
-      userIdentifier: userIdentifiers[index] || (productNames.length === 1 ? normalizeText(contract.userIdentifier) : ""),
-      vatType: contractVatType ?? normalizeVatType(String(snapshot?.vatType ?? product?.vatType ?? "")),
-      unitPrice: Math.max(0, Number(snapshot?.unitPrice ?? product?.unitPrice) || 0),
-      days: productNames.length === 1 ? Math.max(1, Number(contract.days) || baseDays || 1) : baseDays,
-      addQuantity,
-      extendQuantity,
-      quantity,
-      baseDays,
-      worker: workerNames[index] || normalizeText(snapshot?.worker ?? product?.worker),
-      workCost: Math.max(0, Number(snapshot?.workCost ?? product?.workCost) || 0),
-    } satisfies ProductItem;
-  });
-
-  if (baseItems.length === 1) {
-    const item = baseItems[0];
-    if (item.unitPrice <= 0 && derivedBaseAmount > 0) {
-      item.unitPrice = derivedBaseAmount;
-    }
-    if (!item.worker) {
-      item.worker = normalizeText(contract.worker);
-    }
-    if (item.workCost <= 0 && Number(contract.workCost) > 0) {
-      item.workCost = Number(contract.workCost);
-    }
-    return baseItems;
-  }
-
-  const estimatedSupply = baseItems.reduce((sum, item) => sum + calculateSupplyAmount(item), 0);
-  if (derivedBaseAmount > 0 && estimatedSupply > 0) {
-    const ratio = derivedBaseAmount / estimatedSupply;
-    baseItems.forEach((item, index) => {
-      item.unitPrice = Math.max(0, Math.round(item.unitPrice * ratio));
-      if (index === baseItems.length - 1) {
-        const currentSum = baseItems.slice(0, -1).reduce((sum, current) => sum + calculateSupplyAmount(current), 0);
-        const currentQuantity = getItemQuantity(item);
-        if (currentQuantity > 0) {
-          item.unitPrice = Math.max(0, Math.round((derivedBaseAmount - currentSum) / currentQuantity));
-        }
-      }
-    });
-  }
-
-  return baseItems;
-};
+  return "inline-flex items-center rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-[11px] font-semibold text-red-700";
+}
 
 export default function ReceivablesPage() {
   const { toast } = useToast();
@@ -293,53 +119,118 @@ export default function ReceivablesPage() {
   const [endDate, setEndDate] = useState<Date>(getKoreanEndOfDay());
   const [customerFilter, setCustomerFilter] = useState("all");
   const [managerFilter, setManagerFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
   const [selectedReceivableRowKeys, setSelectedReceivableRowKeys] = useState<Set<string>>(new Set());
 
-  const { data: allContracts = [], isLoading } = useQuery<Contract[]>({
+  const { data: allContracts = [], isLoading: contractsLoading } = useQuery<Contract[]>({
     queryKey: ["/api/contracts"],
   });
 
-  const { data: products = [] } = useQuery<Product[]>({
-    queryKey: ["/api/products"],
+  const { data: deposits = [], isLoading: depositsLoading } = useQuery<Deposit[]>({
+    queryKey: ["/api/deposits"],
   });
 
-  const { data: productRateHistories = [] } = useQuery<ProductRateHistory[]>({
-    queryKey: ["/api/product-rate-histories"],
-  });
-
-  const isReceivableContract = (contract: Contract) => {
-    const paymentMethod = normalizeText(contract.paymentMethod);
-    if (excludedPaymentMethods.has(paymentMethod)) return false;
-    if (receivableBankMethods.has(paymentMethod)) return true;
-    return !contract.paymentConfirmed;
-  };
+  const depositByContractId = useMemo(() => {
+    const map = new Map<string, Deposit>();
+    for (const deposit of deposits) {
+      const contractId = normalizeText(deposit.contractId);
+      if (!contractId || map.has(contractId)) continue;
+      map.set(contractId, deposit);
+    }
+    return map;
+  }, [deposits]);
 
   const receivableRows = useMemo(() => {
-    return allContracts
-      .filter((contract) => isReceivableContract(contract))
-      .flatMap((contract) => {
-        const items = parseStoredProductItems(contract, products, productRateHistories);
-        const safeItems = items.length > 0 ? items : [createFallbackItem(contract)];
-        return safeItems.map((item, itemIndex) => {
-          const computedAmount = getItemTotalAmount(item);
-          const receivableAmount = computedAmount > 0
-            ? computedAmount
-            : safeItems.length === 1
-              ? Math.max(0, Number(contract.cost) || 0)
-              : 0;
+    const grouped = new Map<string, Contract[]>();
+    for (const contract of allContracts) {
+      const customerKey = normalizeCompactText(contract.customerName);
+      if (!customerKey) continue;
+      if (!grouped.has(customerKey)) grouped.set(customerKey, []);
+      grouped.get(customerKey)!.push(contract);
+    }
 
-          return {
-            rowKey: `${contract.id}:${item.id || itemIndex + 1}`,
+    const rows: ReceivableRow[] = [];
+
+    grouped.forEach((contracts, customerKey) => {
+      const sortedContracts = [...contracts].sort(
+        (a, b) => new Date(a.contractDate).getTime() - new Date(b.contractDate).getTime(),
+      );
+      const customerTotalAmount = sortedContracts.reduce((sum, contract) => sum + getSignedContractAmount(contract), 0);
+      const customerConfirmedAmount = sortedContracts.reduce(
+        (sum, contract) => sum + getContractConfirmedAmount(contract, depositByContractId.get(contract.id)),
+        0,
+      );
+      const customerDifferenceAmount = customerTotalAmount - customerConfirmedAmount;
+
+      if (Math.abs(customerDifferenceAmount) < 1) return;
+
+      if (customerDifferenceAmount > 0) {
+        let remainingAmount = customerDifferenceAmount;
+        const candidates = sortedContracts
+          .filter((contract) => !isRefundContract(contract) && getPositiveContractAmount(contract) > 0)
+          .map((contract) => {
+            const confirmedAmount = getContractConfirmedAmount(contract, depositByContractId.get(contract.id));
+            return {
+              contract,
+              openAmount: Math.max(0, getPositiveContractAmount(contract) - confirmedAmount),
+            };
+          })
+          .filter((entry) => entry.openAmount > 0);
+
+        const mappingTargets = candidates.length > 0
+          ? candidates
+          : sortedContracts
+            .filter((contract) => !isRefundContract(contract) && getPositiveContractAmount(contract) > 0)
+            .map((contract) => ({ contract, openAmount: Math.min(getPositiveContractAmount(contract), remainingAmount) }));
+
+        for (const entry of mappingTargets) {
+          if (remainingAmount <= 0) break;
+          const mappedAmount = Math.min(entry.openAmount, remainingAmount);
+          if (mappedAmount <= 0) continue;
+          rows.push({
+            rowKey: `${customerKey}:${entry.contract.id}:receivable:${rows.length}`,
+            status: "미수",
+            contract: entry.contract,
+            contractAmount: getSignedContractAmount(entry.contract),
+            mappedAmount,
+            customerTotalAmount,
+            customerConfirmedAmount,
+            customerDifferenceAmount,
+            reason: "고객 순계약금액보다 입금확인 금액이 부족합니다.",
+          });
+          remainingAmount -= mappedAmount;
+        }
+      } else {
+        let remainingAmount = Math.abs(customerDifferenceAmount);
+        const refundContracts = sortedContracts
+          .filter(isRefundContract)
+          .sort((a, b) => new Date(b.contractDate).getTime() - new Date(a.contractDate).getTime());
+
+        const mappingTargets = refundContracts.length > 0 ? refundContracts : sortedContracts.slice(-1);
+        for (const contract of mappingTargets) {
+          if (remainingAmount <= 0) break;
+          const basisAmount = Math.max(1, Math.abs(getSignedContractAmount(contract)));
+          const mappedAmount = -Math.min(basisAmount, remainingAmount);
+          rows.push({
+            rowKey: `${customerKey}:${contract.id}:overpaid:${rows.length}`,
+            status: "초과/환불확인",
             contract,
-            item,
-            itemIndex,
-            receivableAmount,
-          } satisfies ReceivableRow;
-        });
-      });
-  }, [allContracts, products, productRateHistories]);
+            contractAmount: getSignedContractAmount(contract),
+            mappedAmount,
+            customerTotalAmount,
+            customerConfirmedAmount,
+            customerDifferenceAmount,
+            reason: "환불 계약 반영 후 입금확인 금액이 순계약금액보다 큽니다.",
+          });
+          remainingAmount -= Math.abs(mappedAmount);
+        }
+      }
+    });
 
-  const receivables = useMemo(() => {
+    return rows.sort((a, b) => new Date(b.contract.contractDate).getTime() - new Date(a.contract.contractDate).getTime());
+  }, [allContracts, depositByContractId]);
+
+  const filteredReceivables = useMemo(() => {
     const query = normalizeText(deferredSearchQuery);
     const startKey = getKoreanDateKey(startDate);
     const endKey = getKoreanDateKey(endDate);
@@ -349,25 +240,25 @@ export default function ReceivablesPage() {
     return receivableRows.filter((row) => {
       const dateKey = getKoreanDateKey(row.contract.contractDate);
       if (dateKey < rangeStart || dateKey > rangeEnd) return false;
-
       if (customerFilter !== "all" && row.contract.customerName !== customerFilter) return false;
       if (managerFilter !== "all" && row.contract.managerName !== managerFilter) return false;
-
+      if (statusFilter !== "all" && row.status !== statusFilter) return false;
       if (!query) return true;
-
       return matchesKoreanSearch(
         [
           row.contract.customerName,
-          row.item.userIdentifier,
+          row.contract.userIdentifier,
           row.contract.managerName,
-          row.item.productName,
-          row.item.worker,
+          row.contract.products,
+          row.contract.worker,
           row.contract.notes,
+          row.status,
+          row.reason,
         ],
         query,
       );
     });
-  }, [customerFilter, deferredSearchQuery, endDate, managerFilter, receivableRows, startDate]);
+  }, [customerFilter, deferredSearchQuery, endDate, managerFilter, receivableRows, startDate, statusFilter]);
 
   const uniqueCustomers = useMemo(
     () => Array.from(new Set(receivableRows.map((row) => row.contract.customerName).filter(Boolean))).sort((a, b) => a.localeCompare(b, "ko")),
@@ -378,27 +269,29 @@ export default function ReceivablesPage() {
     [receivableRows],
   );
 
-  const totalPages = Math.max(1, Math.ceil(receivables.length / itemsPerPage));
-  const paginatedReceivables = receivables.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+  const totalPages = Math.max(1, Math.ceil(filteredReceivables.length / itemsPerPage));
+  const paginatedReceivables = filteredReceivables.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
   const currentPageReceivableKeys = paginatedReceivables.map((row) => row.rowKey);
   const isCurrentPageAllSelected = currentPageReceivableKeys.length > 0 &&
     currentPageReceivableKeys.every((key) => selectedReceivableRowKeys.has(key));
-  const selectedReceivables = receivables.filter((row) => selectedReceivableRowKeys.has(row.rowKey));
-
-  const totalReceivableAmount = receivables.reduce((sum, row) => sum + row.receivableAmount, 0);
+  const selectedReceivables = filteredReceivables.filter((row) => selectedReceivableRowKeys.has(row.rowKey));
+  const totalReceivableAmount = filteredReceivables.reduce((sum, row) => sum + Math.max(row.mappedAmount, 0), 0);
+  const totalOverpaidAmount = filteredReceivables.reduce((sum, row) => sum + Math.abs(Math.min(row.mappedAmount, 0)), 0);
+  const isLoading = contractsLoading || depositsLoading;
 
   useEffect(() => {
     setSelectedReceivableRowKeys((prev) => {
-      const visibleKeys = new Set(receivables.map((row) => row.rowKey));
+      const visibleKeys = new Set(filteredReceivables.map((row) => row.rowKey));
       const next = new Set(Array.from(prev).filter((key) => visibleKeys.has(key)));
       return next.size === prev.size ? prev : next;
     });
-  }, [receivables]);
+  }, [filteredReceivables]);
 
   const resetFilters = () => {
     setSearchQuery("");
     setCustomerFilter("all");
     setManagerFilter("all");
+    setStatusFilter("all");
     setStartDate(getKoreanStartOfYear());
     setEndDate(getKoreanEndOfDay());
     setCurrentPage(1);
@@ -408,11 +301,8 @@ export default function ReceivablesPage() {
   const toggleReceivableSelection = (rowKey: string) => {
     setSelectedReceivableRowKeys((prev) => {
       const next = new Set(prev);
-      if (next.has(rowKey)) {
-        next.delete(rowKey);
-      } else {
-        next.add(rowKey);
-      }
+      if (next.has(rowKey)) next.delete(rowKey);
+      else next.add(rowKey);
       return next;
     });
   };
@@ -435,73 +325,44 @@ export default function ReceivablesPage() {
       return;
     }
 
-    const selectedTotalReceivableAmount = selectedReceivables.reduce((sum, row) => sum + row.receivableAmount, 0);
-    const exportRows = [
-      ...selectedReceivables.map((row) => ({
-        날짜: formatDate(row.contract.contractDate),
+    const worksheet = XLSX.utils.json_to_sheet(
+      selectedReceivables.map((row) => ({
+        계약일: formatDate(row.contract.contractDate),
         고객명: row.contract.customerName,
-        사용자ID: row.item.userIdentifier || "-",
-        상품: row.item.productName || "-",
-        일수: Number(row.item.days) || 0,
-        추가: Number(row.item.addQuantity) || 0,
-        연장: Number(row.item.extendQuantity) || 0,
-        비용: Number(row.receivableAmount) || 0,
+        사용자ID: row.contract.userIdentifier || "-",
+        상품: row.contract.products || "-",
+        구분: row.status,
+        계약금액: row.contractAmount,
+        고객순계약액: row.customerTotalAmount,
+        입금확인액: row.customerConfirmedAmount,
+        차액: row.customerDifferenceAmount,
+        매핑금액: row.mappedAmount,
         담당자: row.contract.managerName || "-",
-        미수금액: Number(row.receivableAmount) || 0,
-        작업자: row.item.worker || "-",
+        작업자: row.contract.worker || "-",
+        매핑사유: row.reason,
         비고: row.contract.notes || "",
       })),
-      {
-        날짜: "합계",
-        고객명: "",
-        사용자ID: "",
-        상품: "",
-        일수: "",
-        추가: "",
-        연장: "",
-        비용: selectedTotalReceivableAmount,
-        담당자: "",
-        미수금액: selectedTotalReceivableAmount,
-        작업자: "",
-        비고: "",
-      },
-    ];
-
-    void exportRows;
-
-    const exportRowsForExcel = [
-      ["날짜", "고객명", "사용자ID", "상품", "일수", "추가", "연장", "비용", "담당자"],
-      ...selectedReceivables.map((row) => [
-        formatDate(row.contract.contractDate),
-        row.contract.customerName,
-        row.item.userIdentifier || "-",
-        row.item.productName || "-",
-        Number(row.item.days) || 0,
-        Number(row.item.addQuantity) || 0,
-        Number(row.item.extendQuantity) || 0,
-        Number(row.receivableAmount) || 0,
-        row.contract.managerName || "-",
-      ]),
-      ["합계", "", "", "", "", "", "", selectedTotalReceivableAmount, ""],
-    ];
-
-    const worksheet = XLSX.utils.aoa_to_sheet(exportRowsForExcel);
+    );
     worksheet["!cols"] = [
       { wch: 12 },
       { wch: 20 },
       { wch: 18 },
-      { wch: 24 },
-      { wch: 8 },
-      { wch: 8 },
-      { wch: 8 },
+      { wch: 28 },
       { wch: 14 },
       { wch: 14 },
+      { wch: 14 },
+      { wch: 14 },
+      { wch: 14 },
+      { wch: 14 },
+      { wch: 12 },
+      { wch: 12 },
+      { wch: 36 },
+      { wch: 30 },
     ];
 
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "미수금");
-    const fileName = `미수금_선택목록_${format(new Date(), "yyyyMMdd_HHmmss")}.xlsx`;
-    XLSX.writeFile(workbook, fileName);
+    XLSX.writeFile(workbook, `미수금_선택목록_${format(new Date(), "yyyyMMdd_HHmmss")}.xlsx`);
     toast({ title: `${selectedReceivables.length}건을 엑셀로 내보냈습니다.` });
   };
 
@@ -510,22 +371,30 @@ export default function ReceivablesPage() {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
           <AlertCircle className="w-6 h-6 text-red-500" />
-          <h1 className="text-2xl font-bold" data-testid="text-page-title">미수금 관리</h1>
+          <div>
+            <h1 className="text-2xl font-bold" data-testid="text-page-title">미수금 관리</h1>
+            <p className="mt-1 text-xs text-muted-foreground">고객별 순계약금액(환불 포함)과 입금확인 금액의 차이를 계약에 매핑합니다.</p>
+          </div>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
           <span className="text-sm" data-testid="text-result-count">
-            검색 결과 {receivables.length}건 | 총 미수금{" "}
+            검색 결과 {filteredReceivables.length}건 | 총 미수{" "}
             <span className="text-red-500 font-bold text-base" data-testid="text-total-receivable">
               {formatAmount(totalReceivableAmount)}원
             </span>
+            {totalOverpaidAmount > 0 && (
+              <span className="ml-2 text-blue-600 font-bold text-base" data-testid="text-total-overpaid">
+                초과/환불확인 {formatAmount(totalOverpaidAmount)}원
+              </span>
+            )}
           </span>
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
-              placeholder="고객명, 사용자ID, 상품, 담당자, 작업자 검색"
+              placeholder="고객명, 사용자ID, 상품, 담당자 검색"
               value={searchQuery}
-              onChange={(e) => {
-                setSearchQuery(e.target.value);
+              onChange={(event) => {
+                setSearchQuery(event.target.value);
                 setCurrentPage(1);
               }}
               className="pl-9 w-64 rounded-none"
@@ -548,7 +417,7 @@ export default function ReceivablesPage() {
       <div className="flex items-center gap-2 p-3 bg-card border border-border rounded-none flex-wrap">
         <Button variant="ghost" size="sm" className="gap-1 rounded-none">
           <Filter className="w-4 h-4" />
-          필터추가
+          필터
         </Button>
         <Popover>
           <PopoverTrigger asChild>
@@ -567,7 +436,13 @@ export default function ReceivablesPage() {
           </PopoverContent>
         </Popover>
 
-        <Select value={customerFilter} onValueChange={(v) => { setCustomerFilter(v); setCurrentPage(1); }}>
+        <Select
+          value={customerFilter}
+          onValueChange={(value) => {
+            setCustomerFilter(value);
+            setCurrentPage(1);
+          }}
+        >
           <SelectTrigger className="w-36 rounded-none" data-testid="filter-customer">
             <SelectValue placeholder="고객명" />
           </SelectTrigger>
@@ -579,7 +454,13 @@ export default function ReceivablesPage() {
           </SelectContent>
         </Select>
 
-        <Select value={managerFilter} onValueChange={(v) => { setManagerFilter(v); setCurrentPage(1); }}>
+        <Select
+          value={managerFilter}
+          onValueChange={(value) => {
+            setManagerFilter(value);
+            setCurrentPage(1);
+          }}
+        >
           <SelectTrigger className="w-36 rounded-none" data-testid="filter-manager">
             <SelectValue placeholder="담당자" />
           </SelectTrigger>
@@ -591,7 +472,30 @@ export default function ReceivablesPage() {
           </SelectContent>
         </Select>
 
-        <Button variant="ghost" size="sm" className="ml-auto text-muted-foreground rounded-none" onClick={resetFilters} data-testid="button-reset-filter">
+        <Select
+          value={statusFilter}
+          onValueChange={(value) => {
+            setStatusFilter(value);
+            setCurrentPage(1);
+          }}
+        >
+          <SelectTrigger className="w-40 rounded-none" data-testid="filter-status">
+            <SelectValue placeholder="구분" />
+          </SelectTrigger>
+          <SelectContent className="rounded-none">
+            <SelectItem value="all">전체</SelectItem>
+            <SelectItem value="미수">미수</SelectItem>
+            <SelectItem value="초과/환불확인">초과/환불확인</SelectItem>
+          </SelectContent>
+        </Select>
+
+        <Button
+          variant="ghost"
+          size="sm"
+          className="ml-auto text-muted-foreground rounded-none"
+          onClick={resetFilters}
+          data-testid="button-reset-filter"
+        >
           <RefreshCw className="w-4 h-4 mr-1" />
           초기화
         </Button>
@@ -610,64 +514,77 @@ export default function ReceivablesPage() {
                       data-testid="checkbox-select-all-receivables"
                     />
                   </th>
-                  <th className="p-4 text-left font-medium text-xs whitespace-nowrap">날짜</th>
+                  <th className="p-4 text-left font-medium text-xs whitespace-nowrap">계약일</th>
                   <th className="p-4 text-left font-medium text-xs whitespace-nowrap">고객명</th>
                   <th className="p-4 text-left font-medium text-xs whitespace-nowrap">사용자ID</th>
                   <th className="p-4 text-left font-medium text-xs whitespace-nowrap">상품</th>
-                  <th className="p-4 text-center font-medium text-xs whitespace-nowrap">일수</th>
-                  <th className="p-4 text-center font-medium text-xs whitespace-nowrap">추가</th>
-                  <th className="p-4 text-center font-medium text-xs whitespace-nowrap">연장</th>
-                  <th className="p-4 text-right font-medium text-xs whitespace-nowrap">비용</th>
+                  <th className="p-4 text-left font-medium text-xs whitespace-nowrap">구분</th>
+                  <th className="p-4 text-right font-medium text-xs whitespace-nowrap">계약금액</th>
+                  <th className="p-4 text-right font-medium text-xs whitespace-nowrap">고객 순계약액</th>
+                  <th className="p-4 text-right font-medium text-xs whitespace-nowrap">입금확인액</th>
+                  <th className="p-4 text-right font-medium text-xs whitespace-nowrap">차액 매핑</th>
                   <th className="p-4 text-left font-medium text-xs whitespace-nowrap">담당자</th>
-                  <th className="p-4 text-left font-medium text-xs whitespace-nowrap">미수금액</th>
                   <th className="p-4 text-left font-medium text-xs whitespace-nowrap">작업자</th>
+                  <th className="p-4 text-left font-medium text-xs whitespace-nowrap">매핑사유</th>
                   <th className="p-4 text-left font-medium text-xs whitespace-nowrap">비고</th>
                 </tr>
               </thead>
               <tbody>
                 {isLoading ? (
-                  Array.from({ length: 5 }).map((_, i) => (
-                    <tr key={i} className="border-b border-border">
-                      <td className="p-4"><Skeleton className="h-4 w-12" /></td>
-                      <td className="p-4"><Skeleton className="h-4 w-24" /></td>
-                      <td className="p-4"><Skeleton className="h-4 w-20" /></td>
-                      <td className="p-4"><Skeleton className="h-4 w-28" /></td>
-                      <td className="p-4"><Skeleton className="h-4 w-32" /></td>
-                      <td className="p-4"><Skeleton className="h-4 w-12" /></td>
-                      <td className="p-4"><Skeleton className="h-4 w-12" /></td>
-                      <td className="p-4"><Skeleton className="h-4 w-12" /></td>
-                      <td className="p-4"><Skeleton className="h-4 w-24" /></td>
-                      <td className="p-4"><Skeleton className="h-4 w-20" /></td>
-                      <td className="p-4"><Skeleton className="h-4 w-20" /></td>
-                      <td className="p-4"><Skeleton className="h-4 w-32" /></td>
+                  Array.from({ length: 5 }).map((_, rowIndex) => (
+                    <tr key={rowIndex} className="border-b border-border">
+                      {Array.from({ length: 14 }).map((__, cellIndex) => (
+                        <td key={cellIndex} className="p-4">
+                          <Skeleton className="h-4 w-20" />
+                        </td>
+                      ))}
                     </tr>
                   ))
                 ) : paginatedReceivables.length === 0 ? (
                   <tr>
-                    <td colSpan={13} className="p-12 text-center text-muted-foreground">미수금 내역이 없습니다.</td>
+                    <td colSpan={14} className="p-12 text-center text-muted-foreground">
+                      미수금 또는 환불 차액이 없습니다.
+                    </td>
                   </tr>
                 ) : (
                   paginatedReceivables.map((row) => (
-                    <tr key={row.rowKey} className="border-b border-border hover:bg-muted/20 transition-colors" data-testid={`row-receivable-${row.contract.id}-${row.itemIndex}`}>
+                    <tr key={row.rowKey} className="border-b border-border hover:bg-muted/20 transition-colors" data-testid={`row-receivable-${row.contract.id}`}>
                       <td className="p-4">
                         <Checkbox
                           checked={selectedReceivableRowKeys.has(row.rowKey)}
                           onCheckedChange={() => toggleReceivableSelection(row.rowKey)}
-                          data-testid={`checkbox-receivable-${row.contract.id}-${row.itemIndex}`}
+                          data-testid={`checkbox-receivable-${row.contract.id}`}
                         />
                       </td>
                       <td className="p-4 text-xs whitespace-nowrap">{formatDate(row.contract.contractDate)}</td>
                       <td className="p-4 text-xs whitespace-nowrap">{row.contract.customerName}</td>
-                      <td className="p-4 text-xs whitespace-nowrap">{row.item.userIdentifier || "-"}</td>
-                      <td className="p-4 text-xs whitespace-nowrap">{row.item.productName || "-"}</td>
-                      <td className="p-4 text-xs text-center whitespace-nowrap">{row.item.days || 0}</td>
-                      <td className="p-4 text-xs text-center whitespace-nowrap">{row.item.addQuantity || 0}</td>
-                      <td className="p-4 text-xs text-center whitespace-nowrap">{row.item.extendQuantity || 0}</td>
-                      <td className="p-4 text-xs text-right whitespace-nowrap">{formatAmount(row.receivableAmount)}원</td>
+                      <td className="p-4 text-xs whitespace-nowrap">{row.contract.userIdentifier || "-"}</td>
+                      <td className="p-4 text-xs max-w-[240px] text-muted-foreground">
+                        <span className="truncate block" title={row.contract.products || "-"}>
+                          {row.contract.products || "-"}
+                        </span>
+                      </td>
+                      <td className="p-4 text-xs whitespace-nowrap">
+                        <span className={getStatusClassName(row.status)}>{row.status}</span>
+                      </td>
+                      <td className={`p-4 text-xs text-right whitespace-nowrap font-medium ${row.contractAmount < 0 ? "text-rose-600" : ""}`}>
+                        {signedFormatAmount(row.contractAmount)}원
+                      </td>
+                      <td className="p-4 text-xs text-right whitespace-nowrap">{signedFormatAmount(row.customerTotalAmount)}원</td>
+                      <td className="p-4 text-xs text-right whitespace-nowrap">{formatAmount(row.customerConfirmedAmount)}원</td>
+                      <td className={`p-4 text-xs text-right whitespace-nowrap font-bold ${getRowAmountClassName(row.mappedAmount)}`}>
+                        {signedFormatAmount(row.mappedAmount)}원
+                      </td>
                       <td className="p-4 text-xs whitespace-nowrap">{row.contract.managerName || "-"}</td>
-                      <td className="p-4 text-xs whitespace-nowrap font-bold text-red-500">{formatAmount(row.receivableAmount)}원</td>
-                      <td className="p-4 text-xs whitespace-nowrap">{row.item.worker || "-"}</td>
-                      <td className="p-4 text-xs whitespace-nowrap text-muted-foreground">{row.contract.notes || "-"}</td>
+                      <td className="p-4 text-xs whitespace-nowrap">{row.contract.worker || "-"}</td>
+                      <td className="p-4 text-xs max-w-[260px] text-muted-foreground">
+                        <span className="truncate block" title={row.reason}>{row.reason}</span>
+                      </td>
+                      <td className="p-4 text-xs max-w-[220px] text-muted-foreground">
+                        <span className="truncate block" title={row.contract.notes || "-"}>
+                          {row.contract.notes || "-"}
+                        </span>
+                      </td>
                     </tr>
                   ))
                 )}
@@ -675,8 +592,13 @@ export default function ReceivablesPage() {
               {paginatedReceivables.length > 0 && (
                 <tfoot>
                   <tr className="bg-muted/30 border-t-2 border-border">
-                    <td colSpan={10} className="p-4 text-right font-bold text-xs whitespace-nowrap">합계</td>
-                    <td className="p-4 text-xs whitespace-nowrap font-bold text-red-500" data-testid="text-footer-total">{formatAmount(totalReceivableAmount)}원</td>
+                    <td colSpan={9} className="p-4 text-right font-bold text-xs whitespace-nowrap">합계</td>
+                    <td className="p-4 text-xs text-right whitespace-nowrap font-bold">
+                      <span className="text-red-600">{formatAmount(totalReceivableAmount)}원</span>
+                      {totalOverpaidAmount > 0 && <span className="ml-3 text-blue-600">-{formatAmount(totalOverpaidAmount)}원</span>}
+                    </td>
+                    <td className="p-4" />
+                    <td className="p-4" />
                     <td className="p-4" />
                     <td className="p-4" />
                   </tr>
@@ -688,7 +610,13 @@ export default function ReceivablesPage() {
       </Card>
 
       <div className="flex items-center justify-between flex-wrap gap-2">
-        <Select value={itemsPerPage.toString()} onValueChange={(v) => { setItemsPerPage(Number(v)); setCurrentPage(1); }}>
+        <Select
+          value={itemsPerPage.toString()}
+          onValueChange={(value) => {
+            setItemsPerPage(Number(value));
+            setCurrentPage(1);
+          }}
+        >
           <SelectTrigger className="w-32 rounded-none" data-testid="select-items-per-page">
             <SelectValue />
           </SelectTrigger>

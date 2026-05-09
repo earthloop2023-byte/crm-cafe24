@@ -139,6 +139,7 @@ export interface IStorage {
   getContracts(): Promise<Contract[]>;
   getContractsPaged(params: ContractPagedQuery): Promise<ContractPagedResult>;
   getContract(id: string): Promise<Contract | undefined>;
+  getRefundContractsBySource(sourceContractId: string, sourceItemId?: string): Promise<Contract[]>;
   createContract(contract: InsertContract): Promise<Contract>;
   updateContract(id: string, contract: Partial<InsertContract>): Promise<Contract | undefined>;
   deleteContract(id: string): Promise<void>;
@@ -173,6 +174,7 @@ export interface IStorage {
   
   getDeposits(): Promise<Deposit[]>;
   getDeposit(id: string): Promise<Deposit | undefined>;
+  getDepositByContractId(contractId: string): Promise<Deposit | undefined>;
   createDeposit(deposit: InsertDeposit): Promise<Deposit>;
   createDeposits(depositList: InsertDeposit[]): Promise<Deposit[]>;
   updateDeposit(id: string, deposit: Partial<InsertDeposit>): Promise<Deposit | undefined>;
@@ -678,6 +680,28 @@ export class DatabaseStorage implements IStorage {
     return contract ? decryptPiiRow(contract, CONTRACT_PII_FIELDS) : undefined;
   }
 
+  async getRefundContractsBySource(sourceContractId: string, sourceItemId?: string): Promise<Contract[]> {
+    const normalizedSourceContractId = String(sourceContractId || "").trim();
+    if (!normalizedSourceContractId) return [];
+
+    const filters = [
+      eq(contracts.contractType, "refund"),
+      eq(contracts.sourceContractId, normalizedSourceContractId),
+    ];
+    const normalizedSourceItemId = String(sourceItemId || "").trim();
+    if (normalizedSourceItemId) {
+      filters.push(eq(contracts.sourceItemId, normalizedSourceItemId));
+    }
+
+    const results = await db
+      .select()
+      .from(contracts)
+      .where(and(...filters))
+      .orderBy(desc(contracts.contractDate), desc(contracts.createdAt));
+
+    return results.map((row) => decryptPiiRow(row, CONTRACT_PII_FIELDS));
+  }
+
   async createContract(contract: InsertContract): Promise<Contract> {
     const [created] = await db.insert(contracts).values(encryptPiiRow(contract, CONTRACT_PII_FIELDS)).returning();
     return decryptPiiRow(created, CONTRACT_PII_FIELDS);
@@ -706,8 +730,20 @@ export class DatabaseStorage implements IStorage {
     const allContracts = (await db.select().from(contracts).orderBy(desc(contracts.contractDate))).map((row) =>
       decryptPiiRow(row, CONTRACT_PII_FIELDS),
     );
-    const allRefunds = (await db.select().from(refunds)).map((row) => decryptPiiRow(row, REFUND_PII_FIELDS));
-    const allKeeps = (await db.select().from(keeps)).map((row) => decryptPiiRow(row, KEEP_PII_FIELDS));
+    const allRefunds = await db
+      .select({
+        contractId: refunds.contractId,
+        amount: refunds.amount,
+        refundDate: refunds.refundDate,
+      })
+      .from(refunds);
+    const allKeeps = await db
+      .select({
+        contractId: keeps.contractId,
+        amount: keeps.amount,
+        keepDate: keeps.keepDate,
+      })
+      .from(keeps);
     const allProducts = await db.select().from(products);
     const allProductRateHistories = await db.select().from(productRateHistories);
 
@@ -1061,6 +1097,16 @@ export class DatabaseStorage implements IStorage {
 
   async getDeposit(id: string): Promise<Deposit | undefined> {
     const [deposit] = await db.select().from(deposits).where(eq(deposits.id, id));
+    return deposit ? decryptPiiRow(deposit, DEPOSIT_PII_FIELDS) : undefined;
+  }
+
+  async getDepositByContractId(contractId: string): Promise<Deposit | undefined> {
+    const [deposit] = await db
+      .select()
+      .from(deposits)
+      .where(eq(deposits.contractId, contractId))
+      .orderBy(desc(deposits.confirmedAt), desc(deposits.createdAt))
+      .limit(1);
     return deposit ? decryptPiiRow(deposit, DEPOSIT_PII_FIELDS) : undefined;
   }
 
