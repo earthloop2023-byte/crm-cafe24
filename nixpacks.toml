@@ -1,0 +1,8 @@
+[phases.install]
+cmds = ["npm ci --no-audit --no-fund"]
+
+[phases.build]
+cmds = ["npm run build:aispace"]
+
+[start]
+cmd = "npm run start"
