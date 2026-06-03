@@ -402,7 +402,7 @@ function shouldRunRuntimeSchemaEnsure() {
   const raw = String(process.env.RUNTIME_SCHEMA_ENSURE || "").trim().toLowerCase();
   if (raw === "true" || raw === "1" || raw === "yes" || raw === "on") return true;
   if (raw === "false" || raw === "0" || raw === "no" || raw === "off") return false;
-  return process.env.NODE_ENV !== "production";
+  return (process.env.NODE_ENV || "production") !== "production";
 }
 
 async function getCurrentUserName(req: Request): Promise<string | null> {

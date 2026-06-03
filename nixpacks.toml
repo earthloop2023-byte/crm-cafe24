@@ -5,4 +5,4 @@ cmds = ["npm ci --no-audit --no-fund"]
 cmds = ["npm run build"]
 
 [start]
-cmd = "npm run db:push && node dist/index.js"
+cmd = "node scripts/cafe24-start.mjs"
