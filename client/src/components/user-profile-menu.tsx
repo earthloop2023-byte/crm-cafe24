@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { User, Settings, LogOut, Eye, EyeOff } from "lucide-react";
+import { User, Settings, BookOpen, LogOut, Eye, EyeOff } from "lucide-react";
 import {
   Popover,
   PopoverContent,
@@ -138,6 +138,22 @@ export function UserProfileMenu() {
             >
               <Settings className="w-4 h-4 text-muted-foreground" />
               개인정보변경
+            </button>
+            <button
+              className="flex items-center gap-3 w-full px-4 py-3 text-sm text-foreground hover:bg-muted/50 transition-colors"
+              data-testid="button-onboarding"
+              onClick={() => {
+                const link = document.createElement("a");
+                link.href = "/onboarding.pdf";
+                link.target = "_blank";
+                link.rel = "noopener noreferrer";
+                document.body.appendChild(link);
+                link.click();
+                setTimeout(() => document.body.removeChild(link), 100);
+              }}
+            >
+              <BookOpen className="w-4 h-4 text-muted-foreground" />
+              온보딩자료
             </button>
             <button
               className="flex items-center gap-3 w-full px-4 py-3 text-sm text-destructive hover:bg-muted/50 transition-colors"

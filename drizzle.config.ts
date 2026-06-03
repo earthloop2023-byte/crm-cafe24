@@ -1,15 +1,14 @@
 import { defineConfig } from "drizzle-kit";
-import { resolveDatabaseUrl } from "./server/database-url";
 
-const databaseUrl =
-  resolveDatabaseUrl() ||
-  "postgres://placeholder:placeholder@localhost:5432/placeholder";
+if (!process.env.DATABASE_URL) {
+  throw new Error("DATABASE_URL, ensure the database is provisioned");
+}
 
 export default defineConfig({
   out: "./migrations",
   schema: "./shared/schema.ts",
   dialect: "postgresql",
   dbCredentials: {
-    url: databaseUrl,
+    url: process.env.DATABASE_URL,
   },
 });

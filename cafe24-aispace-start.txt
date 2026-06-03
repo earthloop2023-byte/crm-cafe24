@@ -1,6 +1,0 @@
-Install command: npm ci --no-audit --no-fund
-Build command: npm run build:aispace
-Start command: npm run start
-Health check paths:
-/api/healthz
-/api/readyz
