@@ -35,16 +35,6 @@ export const STORAGE_PII_FIELDS = {
   refunds: ["userIdentifier", "account"] as const,
   keeps: ["userIdentifier"] as const,
   deposits: ["depositorName", "notes"] as const,
-  quotations: [
-    "customerPhone",
-    "customerEmail",
-    "customerName",
-    "customerCompany",
-    "projectName",
-    "notes",
-    "createdByEmail",
-    "createdByPhone",
-  ] as const,
 } as const;
 
 export const RAW_TABLE_PII_COLUMNS = {
@@ -58,16 +48,6 @@ export const RAW_TABLE_PII_COLUMNS = {
   refunds: ["user_identifier", "account"] as const,
   keeps: ["user_identifier"] as const,
   deposits: ["depositor_name", "notes"] as const,
-  quotations: [
-    "customer_phone",
-    "customer_email",
-    "customer_name",
-    "customer_company",
-    "project_name",
-    "notes",
-    "created_by_email",
-    "created_by_phone",
-  ] as const,
   customer_counselings: ["content"] as const,
   customer_change_histories: ["before_data", "after_data"] as const,
   customer_files: ["file_name", "original_file_name", "file_data", "note"] as const,

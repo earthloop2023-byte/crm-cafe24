@@ -42,15 +42,6 @@ const normalizeSearchText = (value: unknown) => normalizeText(value).toLowerCase
 const toNonNegativeInt = (value: unknown) => Math.max(0, Math.round(Number(value) || 0));
 const formatAmount = (amount: number) => formatCeilAmount(amount || 0);
 
-const disbursementStatusOptions = [
-  "지급예정",
-  "지급대기",
-  "지급요청",
-  "지급완료",
-  "일부지급",
-  "지급보류",
-] as const;
-
 type ProductItem = {
   id: string;
   productName: string;
@@ -411,7 +402,6 @@ export default function PaymentsContentPage() {
   const [paymentFilter, setPaymentFilter] = useState("all");
   const [workerFilter, setWorkerFilter] = useState("all");
   const [selectedRowKeys, setSelectedRowKeys] = useState<Set<string>>(new Set());
-  const [bulkDisbursementStatus, setBulkDisbursementStatus] = useState("");
 
   const { data: contractsData = [], isLoading } = useQuery<ContractWithFinancials[]>({
     queryKey: ["/api/contracts-with-financials"],
@@ -442,70 +432,6 @@ export default function PaymentsContentPage() {
       toast({ title: "실행비 일괄처리에 실패했습니다.", variant: "destructive" });
     },
   });
-
-  const buildDisbursementPayload = (
-    contractId: string,
-    updatedStatuses: Array<{ rowKey: string; status: string }>,
-  ) => {
-    const contract = contractsData.find((item) => item.id === contractId);
-    if (!contract) {
-      return null;
-    }
-
-    const nextStatus = normalizeText(updatedStatuses[0]?.status);
-    const parsedItems = parseStoredProductItems(contract, products, productRateHistories);
-    const baseItems = parsedItems.length > 0 ? parsedItems : [createFallbackItem(contract)];
-    const nextItems = baseItems.map((item) => ({
-      ...item,
-      disbursementStatus: nextStatus,
-    }));
-    const storedItems = normalizeProductItemsForStorage(nextItems);
-    return {
-      productDetailsJson: storedItems.length > 0 ? JSON.stringify(storedItems) : null,
-      disbursementStatus: nextStatus || null,
-    };
-  };
-
-  const updateRowDisbursementMutation = useMutation({
-    mutationFn: async ({ contractId, rowKey, status }: { contractId: string; rowKey: string; status: string }) => {
-      const payload = buildDisbursementPayload(contractId, [{ rowKey, status }]);
-      if (!payload) return;
-      await apiRequest("PUT", `/api/contracts/${contractId}`, payload);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/contracts-with-financials"] });
-    },
-    onError: () => {
-      toast({ title: "행 지급현황 변경에 실패했습니다.", variant: "destructive" });
-    },
-  });
-
-  const bulkRowDisbursementMutation = useMutation({
-    mutationFn: async ({ rows, status }: { rows: PaymentRow[]; status: string }) => {
-      const grouped = new Map<string, Array<{ rowKey: string; status: string }>>();
-      rows.forEach((row) => {
-        if (!grouped.has(row.contractId)) grouped.set(row.contractId, []);
-        grouped.get(row.contractId)!.push({ rowKey: row.rowKey, status });
-      });
-      await Promise.all(
-        Array.from(grouped.entries()).map(async ([contractId, updates]) => {
-          const payload = buildDisbursementPayload(contractId, updates);
-          if (!payload) return;
-          await apiRequest("PUT", `/api/contracts/${contractId}`, payload);
-        }),
-      );
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/contracts-with-financials"] });
-      setSelectedRowKeys(new Set());
-      setBulkDisbursementStatus("");
-      toast({ title: "선택 행의 지급현황을 적용했습니다." });
-    },
-    onError: () => {
-      toast({ title: "선택 행 지급현황 적용에 실패했습니다.", variant: "destructive" });
-    },
-  });
-
   const paymentRows = useMemo(() => {
     const refundRowsByContract = new Map<string, { total: number; lastDate: string | null }>();
 
@@ -638,7 +564,6 @@ export default function PaymentsContentPage() {
       작업비: Number(row.workAmount) || 0,
       작업자: row.item.worker || "-",
       실행비결제: row.contract.executionPaymentStatus || "입금전",
-      지급현황: row.item.disbursementStatus || "-",
       비고: row.contract.notes || "",
     }));
 
@@ -704,27 +629,6 @@ export default function PaymentsContentPage() {
           >
             <Download className="w-4 h-4" />
             엑셀다운로드 ({selectedRows.length})
-          </Button>
-          <Select value={bulkDisbursementStatus || undefined} onValueChange={setBulkDisbursementStatus}>
-            <SelectTrigger className="w-36 rounded-none" data-testid="select-bulk-disbursement-status">
-              <SelectValue placeholder="지급현황 선택" />
-            </SelectTrigger>
-            <SelectContent className="rounded-none">
-              {disbursementStatusOptions.map((status) => (
-                <SelectItem key={status} value={status}>
-                  {status}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Button
-            variant="outline"
-            className="rounded-none"
-            disabled={selectedRows.length === 0 || !bulkDisbursementStatus || bulkRowDisbursementMutation.isPending}
-            onClick={() => bulkRowDisbursementMutation.mutate({ rows: selectedRows, status: bulkDisbursementStatus })}
-            data-testid="button-bulk-disbursement-apply"
-          >
-            {bulkRowDisbursementMutation.isPending ? "적용 중..." : `지급현황 적용 (${selectedRows.length})`}
           </Button>
         </div>
       </div>
@@ -891,7 +795,6 @@ export default function PaymentsContentPage() {
                   <TableHead className="text-xs font-medium text-right whitespace-nowrap">작업비</TableHead>
                   <TableHead className="text-xs font-medium whitespace-nowrap">작업자</TableHead>
                   <TableHead className="text-xs font-medium whitespace-nowrap">실행비결제</TableHead>
-                  <TableHead className="text-xs font-medium whitespace-nowrap">지급현황</TableHead>
                   <TableHead className="text-xs font-medium whitespace-nowrap">비고</TableHead>
                 </TableRow>
               </TableHeader>
@@ -899,14 +802,14 @@ export default function PaymentsContentPage() {
                 {isLoading ? (
                   Array.from({ length: 5 }).map((_, i) => (
                     <TableRow key={i}>
-                      {Array.from({ length: 17 }).map((__, j) => (
+                      {Array.from({ length: 16 }).map((__, j) => (
                         <TableCell key={j}><Skeleton className="h-4 w-16" /></TableCell>
                       ))}
                     </TableRow>
                   ))
                 ) : paginatedRows.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={17} className="p-12 text-center text-muted-foreground">
+                    <TableCell colSpan={16} className="p-12 text-center text-muted-foreground">
                       등록된 데이터가 없습니다.
                     </TableCell>
                   </TableRow>
@@ -962,23 +865,6 @@ export default function PaymentsContentPage() {
                         <Badge variant={row.contract.executionPaymentStatus === "입금완료" ? "default" : "secondary"} className="rounded-none text-xs">
                           {row.contract.executionPaymentStatus || "입금전"}
                         </Badge>
-                      </TableCell>
-                      <TableCell className="text-xs whitespace-nowrap">
-                        <Select
-                          value={row.item.disbursementStatus || undefined}
-                          onValueChange={(value) => updateRowDisbursementMutation.mutate({ contractId: row.contract.id, rowKey: row.rowKey, status: value })}
-                        >
-                          <SelectTrigger className="h-7 text-xs rounded-none w-[100px] px-2" data-testid={`select-disbursement-${row.contract.id}-${row.itemIndex}`}>
-                            <SelectValue placeholder="선택" />
-                          </SelectTrigger>
-                          <SelectContent className="rounded-none">
-                            {disbursementStatusOptions.map((status) => (
-                              <SelectItem key={status} value={status}>
-                                {status}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground w-[180px] max-w-[180px]">
                         <span

@@ -1,9 +1,9 @@
-﻿import type { Express, Request, Response, NextFunction } from "express";
+import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import crypto from "crypto";
 import type { PoolClient } from "pg";
 import { storage } from "./storage";
-import { pool } from "./db";
+import { hasDatabaseConfig, pool } from "./db";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
 import {
@@ -23,8 +23,6 @@ import {
   insertRegionalManagementFeeSchema,
   insertRegionalCustomerListSchema,
   insertNoticeSchema,
-  insertQuotationSchema,
-  quotations,
   importBatches,
   importStagingRows,
   importMappings,
@@ -76,6 +74,29 @@ import {
 const PERMISSION_ADMIN_ROLES = ["대표이사", "총괄이사", "개발자"];
 const DEPOSIT_ACTION_ALLOWED_DEPARTMENTS = new Set(["경영지원팀", "개발팀"]);
 const REGIONAL_CUSTOMER_LIST_ALLOWED_DEPARTMENTS = new Set(["타지역팀"]);
+const LOCAL_ADMIN_USER_ID = "__local_admin__";
+const localAdminUser = {
+  id: LOCAL_ADMIN_USER_ID,
+  loginId: "admin",
+  name: "관리자",
+  email: null,
+  phone: null,
+  role: "개발자",
+  department: "개발팀",
+  workStatus: "재직중",
+  isActive: true,
+  lastLoginAt: null,
+  lastPasswordChangeAt: null,
+  createdAt: new Date(0),
+};
+
+function isLocalAdminLogin(loginId: unknown, password: unknown): boolean {
+  return !hasDatabaseConfig && String(loginId || "") === "admin" && String(password || "") === "a1234";
+}
+
+function getLocalAdminUserBySession(userId: unknown) {
+  return !hasDatabaseConfig && userId === LOCAL_ADMIN_USER_ID ? localAdminUser : null;
+}
 
 async function ensureDeletedContractDepositsTable() {
   await pool.query(`
@@ -1100,12 +1121,8 @@ function vatTypeFromInvoiceIssued(value: string | null | undefined): "부가세�
 
 const PAYMENT_METHOD_BEFORE_DEPOSIT = "입금 전";
 const PAYMENT_METHOD_REFUND_REQUEST = "환불요청";
-const PAYMENT_METHOD_KEEP_USAGE = "적립금사용";
 const PAYMENT_METHOD_DEPOSIT_CONFIRMED = "입금확인";
 const PAYMENT_METHOD_OTHER = "기타";
-const KEEP_STATUS_PENDING = "환불 검토";
-const KEEP_STATUS_REUSE = "적립금 재사용";
-const KEEP_STATUS_USAGE = "적립금 사용";
 const REFUND_STATUS_PENDING = "환불대기";
 const REFUND_STATUS_REQUESTED = "환불요청";
 const REFUND_STATUS_COMPLETED = "환불완료";
@@ -1137,25 +1154,18 @@ function normalizeContractPaymentMethod(value: unknown): string {
     return PAYMENT_METHOD_REFUND_REQUEST;
   }
   if (
-    normalized === PAYMENT_METHOD_KEEP_USAGE ||
     normalized === "적립금사용" ||
     normalized === "적립금" ||
     normalized === "적립" ||
     ["usekeep", "usecredit", "credituse", "keepuse", "keep", "credit"].includes(asciiKey)
-  ) {
-    return PAYMENT_METHOD_KEEP_USAGE;
-  }
+  ) return PAYMENT_METHOD_OTHER;
   if (
     normalized === PAYMENT_METHOD_DEPOSIT_CONFIRMED ||
     normalized === "입금완료" ||
-    normalized === "하나" ||
-    normalized === "국민" ||
-    normalized === "농협" ||
-    normalized === "하나은행" ||
     normalized === "국민은행" ||
-    normalized === "농협은행" ||
+    normalized === "카드결제" ||
     normalized === "크몽" ||
-    ["deposit", "deposited", "banktransfer", "transfer", "confirmed", "hana", "hanabank", "kb", "kookmin", "kbstar", "nonghyup", "nh", "kmong"].includes(asciiKey)
+    ["deposit", "deposited", "banktransfer", "transfer", "confirmed", "kb", "kookmin", "kbstar", "card", "cardpayment", "kmong"].includes(asciiKey)
   ) {
     return PAYMENT_METHOD_DEPOSIT_CONFIRMED;
   }
@@ -1172,25 +1182,11 @@ function normalizeContractDepositBank(value: unknown, fallbackPaymentMethod?: un
   const asciiKey = normalized.replace(/[_-]/g, "").toLowerCase();
 
   if (
-    normalized === "하나" ||
-    normalized === "하나은행" ||
-    ["hana", "hanabank"].includes(asciiKey)
-  ) {
-    return "하나은행";
-  }
-  if (
     normalized === "국민" ||
     normalized === "국민은행" ||
     ["kb", "kookmin", "kbstar"].includes(asciiKey)
   ) {
     return "국민은행";
-  }
-  if (
-    normalized === "농협" ||
-    normalized === "농협은행" ||
-    ["nonghyup", "nh"].includes(asciiKey)
-  ) {
-    return "농협은행";
   }
   if (
     normalized === "카드결제" ||
@@ -1208,7 +1204,7 @@ function normalizeContractDepositBank(value: unknown, fallbackPaymentMethod?: un
   if (normalized === "기타" || asciiKey === "other") {
     return "기타";
   }
-  return CONTRACT_DEPOSIT_BANK_DEFAULT;
+  return normalized ? "기타" : CONTRACT_DEPOSIT_BANK_DEFAULT;
 }
 
 function shouldAutoMapDepositConfirmation(contract: Pick<Contract, "cost" | "contractType" | "paymentMethod" | "paymentConfirmed">): boolean {
@@ -1262,7 +1258,6 @@ function isMatchableDepositContract(contract: { paymentMethod?: unknown; payment
   const normalized = normalizeContractPaymentMethod(contract.paymentMethod);
   return (
     normalized === PAYMENT_METHOD_BEFORE_DEPOSIT ||
-    normalized === PAYMENT_METHOD_KEEP_USAGE ||
     normalized === PAYMENT_METHOD_OTHER
   );
 }
@@ -1307,21 +1302,6 @@ function normalizeRefundStatus(value: unknown): string | null {
 
 function isMissingPiiEncryptionKeyError(error: unknown): boolean {
   return error instanceof Error && error.message.includes("PII_ENCRYPTION_KEY is required to decrypt this value");
-}
-
-function normalizeKeepStatus(value: unknown): string {
-  const normalized = String(value ?? "").trim();
-  if (!normalized) return KEEP_STATUS_REUSE;
-  if (normalized === KEEP_STATUS_PENDING || normalized === "\uD658\uBD88\uAC80\uD1A0" || normalized === "\uD658\uBD88 \uAC80\uD1A0\uC911") {
-    return KEEP_STATUS_PENDING;
-  }
-  if (normalized === KEEP_STATUS_REUSE || normalized === "\uC7AC\uC0AC\uC6A9" || normalized === "\uC801\uB9BD\uAE08") {
-    return KEEP_STATUS_REUSE;
-  }
-  if (normalized === KEEP_STATUS_USAGE || normalized === "\uC801\uB9BD\uAE08\uC0AC\uC6A9" || normalized === "\uC0AC\uC6A9" || normalized === "\uCC28\uAC10") {
-    return KEEP_STATUS_USAGE;
-  }
-  return normalized;
 }
 
 function getMostRecentStoredPaymentMethod(
@@ -2562,7 +2542,24 @@ export async function registerRoutes(
       if (!loginId || !password) {
         return res.status(400).json({ error: "아이디와 비밀번호를 입력해주세요." });
       }
-      const user = await storage.getUserByLoginId(loginId);
+      if (isLocalAdminLogin(loginId, password)) {
+        req.session.regenerate((err) => {
+          if (err) {
+            console.error("Session regeneration error:", err);
+            return res.status(500).json({ error: "Login failed." });
+          }
+          req.session.userId = LOCAL_ADMIN_USER_ID;
+          req.session.save((saveErr) => {
+            if (saveErr) {
+              console.error("Session save error:", saveErr);
+              return res.status(500).json({ error: "Login failed." });
+            }
+            res.clearCookie("crm_logged_out");
+            return res.json(localAdminUser);
+          });
+        });
+        return;
+      }      const user = await storage.getUserByLoginId(loginId);
       if (!user) {
         return res.status(401).json({ error: "아이디 또는 비밀번호가 올바르지 않습니다." });
       }
@@ -2614,6 +2611,9 @@ export async function registerRoutes(
     const userId = req.session.userId;
     let logUser: any = null;
     if (userId) {
+      logUser = getLocalAdminUserBySession(userId);
+    }
+    if (userId && !logUser) {
       try {
         logUser = await storage.getUser(userId);
       } catch (_) {}
@@ -2646,7 +2646,10 @@ export async function registerRoutes(
     if (!req.session.userId) {
       return res.status(401).json({ error: "Not authenticated" });
     }
-    try {
+    const localUser = getLocalAdminUserBySession(req.session.userId);
+    if (localUser) {
+      return res.json(localUser);
+    }    try {
       const user = await storage.getUser(req.session.userId);
       if (!user) {
         req.session.destroy(() => {});
@@ -2785,7 +2788,6 @@ export async function registerRoutes(
   app.use("/api/permissions", requireAuth);
   app.use("/api/system-settings", requireAuth);
   app.use("/api/stats", requireAuth);
-  app.use("/api/quotations", requireAuth);
 
   app.get("/api/users", async (_req, res) => {
     try {
@@ -4333,102 +4335,6 @@ export async function registerRoutes(
       res.status(500).json({ error: "Failed to delete product" });
     }
   });
-
-  app.get("/api/quotations", async (_req, res) => {
-    try {
-      const quotationList = await storage.getQuotations();
-      res.json(quotationList);
-    } catch (error) {
-      console.error("Error fetching quotations:", error);
-      res.status(500).json({ error: "Failed to fetch quotations" });
-    }
-  });
-
-  app.get("/api/quotations/next-number", async (_req, res) => {
-    try {
-      const number = await storage.getNextQuotationNumber();
-      res.json({ quotationNumber: number });
-    } catch (error) {
-      console.error("Error getting next quotation number:", error);
-      res.status(500).json({ error: "Failed to get next quotation number" });
-    }
-  });
-
-  app.get("/api/quotations/:id", async (req, res) => {
-    try {
-      const quotation = await storage.getQuotation(req.params.id);
-      if (!quotation) return res.status(404).json({ error: "Quotation not found" });
-      res.json(quotation);
-    } catch (error) {
-      console.error("Error fetching quotation:", error);
-      res.status(500).json({ error: "Failed to fetch quotation" });
-    }
-  });
-
-  app.post("/api/quotations", async (req, res) => {
-    try {
-      const body = { ...req.body };
-      if (body.quotationDate && typeof body.quotationDate === "string") {
-        body.quotationDate = new Date(body.quotationDate);
-      }
-      if (body.validUntil && typeof body.validUntil === "string") {
-        body.validUntil = new Date(body.validUntil);
-      }
-      if (typeof body.items === "object") {
-        body.items = JSON.stringify(body.items);
-      }
-      const user = await storage.getUser(req.session.userId!);
-      body.createdById = req.session.userId;
-      body.createdByName = user?.name || "Unknown";
-      body.createdByEmail = user?.email || "";
-      body.createdByPhone = user?.phone || "";
-      const parsed = insertQuotationSchema.safeParse(body);
-      if (!parsed.success) {
-        return res.status(400).json({ error: "Invalid quotation data", details: parsed.error });
-      }
-      const created = await storage.createQuotation(parsed.data);
-      res.status(201).json(created);
-    } catch (error) {
-      console.error("Error creating quotation:", error);
-      res.status(500).json({ error: "Failed to create quotation" });
-    }
-  });
-
-  app.put("/api/quotations/:id", async (req, res) => {
-    try {
-      const body = { ...req.body };
-      if (body.quotationDate && typeof body.quotationDate === "string") {
-        body.quotationDate = new Date(body.quotationDate);
-      }
-      if (body.validUntil && typeof body.validUntil === "string") {
-        body.validUntil = new Date(body.validUntil);
-      }
-      if (typeof body.items === "object") {
-        body.items = JSON.stringify(body.items);
-      }
-      const parsed = insertQuotationSchema.partial().safeParse(body);
-      if (!parsed.success) {
-        return res.status(400).json({ error: "Invalid quotation data", details: parsed.error });
-      }
-      const updated = await storage.updateQuotation(req.params.id, parsed.data);
-      if (!updated) return res.status(404).json({ error: "Quotation not found" });
-      res.json(updated);
-    } catch (error) {
-      console.error("Error updating quotation:", error);
-      res.status(500).json({ error: "Failed to update quotation" });
-    }
-  });
-
-  app.delete("/api/quotations/:id", async (req, res) => {
-    try {
-      await storage.deleteQuotation(req.params.id);
-      res.status(204).send();
-    } catch (error) {
-      console.error("Error deleting quotation:", error);
-      res.status(500).json({ error: "Failed to delete quotation" });
-    }
-  });
-
   app.get("/api/contracts/paged", async (req, res) => {
     try {
       const page = toPositiveInt(req.query.page as string | string[] | undefined, 1);
@@ -4472,41 +4378,6 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error fetching contracts:", error);
       res.status(500).json({ error: "Failed to fetch contracts" });
-    }
-  });
-
-  app.post("/api/contracts/bulk-disbursement-status", async (req, res) => {
-    try {
-      const parsed = z.object({
-        ids: z.array(z.string().trim().min(1)).min(1),
-        status: z.string().trim().min(1),
-      }).safeParse(req.body);
-
-      if (!parsed.success) {
-        return res.status(400).json({ error: "Invalid bulk disbursement payload", details: parsed.error });
-      }
-
-      const uniqueIds = Array.from(new Set(parsed.data.ids.map((id) => id.trim()).filter(Boolean)));
-      const result = await pool.query(
-        `
-          UPDATE contracts
-          SET disbursement_status = $1
-          WHERE id = ANY($2::varchar[])
-          RETURNING id
-        `,
-        [parsed.data.status, uniqueIds],
-      );
-
-      await writeSystemLog(req, {
-        actionType: "contract_update",
-        action: `계약 지급현황 일괄변경: ${parsed.data.status}`,
-        details: `updated=${result.rowCount || 0}, ids=${uniqueIds.join(",")}`,
-      });
-
-      res.json({ updatedCount: result.rowCount || 0, status: parsed.data.status });
-    } catch (error) {
-      console.error("Error bulk updating disbursement status:", error);
-      res.status(500).json({ error: "Failed to bulk update disbursement status" });
     }
   });
 
@@ -4959,162 +4830,6 @@ export async function registerRoutes(
       res.status(500).json({ error: "Failed to delete refund" });
     }
   });
-
-  app.get("/api/keeps", async (_req, res) => {
-    try {
-      const keepList = await storage.getAllKeeps();
-      res.json(keepList);
-    } catch (error) {
-      console.error("Error fetching keeps:", error);
-      res.status(500).json({ error: "Failed to fetch keeps" });
-    }
-  });
-
-  app.get("/api/keeps/:contractId", async (req, res) => {
-    try {
-      const itemId = toSingleString(req.query.itemId as string | string[] | undefined).trim();
-      const keepList = await storage.getKeepsByContract(req.params.contractId, itemId || undefined);
-      res.json(keepList);
-    } catch (error) {
-      console.error("Error fetching keeps:", error);
-      res.status(500).json({ error: "Failed to fetch keeps" });
-    }
-  });
-
-  app.post("/api/keeps", async (req, res) => {
-    try {
-      const body = { ...req.body };
-      if (typeof body.keepDate === "string") {
-        body.keepDate = new Date(body.keepDate);
-      }
-      body.amount = toWholeAmount(body.amount);
-      body.targetAmount = toWholeAmount(body.targetAmount);
-      const parsed = insertKeepSchema.parse({
-        ...body,
-        keepStatus: normalizeKeepStatus(body.keepStatus),
-      });
-      if (parsed.amount <= 0) {
-        return res.status(400).json({ error: "Keep amount must be greater than zero." });
-      }
-      const contract = await storage.getContract(parsed.contractId);
-      if (!contract) {
-        return res.status(404).json({ error: "Contract not found." });
-      }
-      const targetAmount = Math.max(0, Number(parsed.targetAmount) || 0);
-      const effectiveTargetAmount = targetAmount > 0 ? targetAmount : Math.max(0, Number(contract.cost) || 0);
-      const existingKeeps = await storage.getKeepsByContract(parsed.contractId, parsed.itemId || undefined);
-      const totalKept = existingKeeps.reduce((sum, keep) => sum + (Number(keep.amount) || 0), 0);
-      const remainingKeepAmount = effectiveTargetAmount - totalKept;
-      if (parsed.amount > effectiveTargetAmount) {
-        return res.status(400).json({ error: "Keep amount cannot exceed selected row amount." });
-      }
-      if (parsed.amount > remainingKeepAmount) {
-        return res.status(400).json({ error: "Keep amount cannot exceed remaining selected row amount." });
-      }
-      const previousPaymentMethod = await resolvePreviousFinancialBasePaymentMethod(parsed.contractId, contract);
-      const keep = await storage.createKeep({
-        ...parsed,
-        previousPaymentMethod,
-      });
-      await syncFinancialPaymentMethod(parsed.contractId);
-      res.status(201).json(keep);
-    } catch (error) {
-      console.error("Error creating keep:", error);
-      res.status(500).json({ error: "Failed to create keep" });
-    }
-  });
-
-  app.post("/api/keeps/:id/refund", async (req, res) => {
-    try {
-      const keepId = toSingleString(req.params.id);
-      const keep = await storage.getKeep(keepId);
-      if (!keep) {
-        return res.status(404).json({ error: "Keep not found" });
-      }
-      if ((Number(keep.amount) || 0) <= 0) {
-        return res.status(400).json({ error: "Keep amount must be greater than zero." });
-      }
-
-      const contract = await storage.getContract(keep.contractId);
-      if (!contract) {
-        return res.status(404).json({ error: "Contract not found." });
-      }
-
-      const existingRefunds = await storage.getRefundsByContract(keep.contractId, keep.itemId || undefined);
-      const totalRefunded = existingRefunds.reduce((sum, refund) => sum + (Number(refund.amount) || 0), 0);
-      const effectiveTargetAmount = Math.max(0, Number(keep.targetAmount) || Number(contract.cost) || 0);
-      const remainingCost = Math.max(0, effectiveTargetAmount - totalRefunded);
-      if ((Number(keep.amount) || 0) > remainingCost) {
-        return res.status(400).json({ error: "Keep refund amount exceeds remaining selected row amount." });
-      }
-
-      const actor = req.session.userId ? await storage.getUser(req.session.userId) : undefined;
-      const previousPaymentMethod =
-        normalizeRestorablePaymentMethod(keep.previousPaymentMethod) ??
-        await resolvePreviousFinancialBasePaymentMethod(keep.contractId, contract);
-      const refund = await storage.createRefund(insertRefundSchema.parse({
-        contractId: keep.contractId,
-        itemId: keep.itemId || null,
-        userIdentifier: keep.userIdentifier || contract.userIdentifier || null,
-        productName: keep.productName || contract.products || null,
-        days: keep.days ?? 0,
-        addQuantity: keep.addQuantity ?? 0,
-        extendQuantity: keep.extendQuantity ?? 0,
-        targetAmount: (Number(keep.targetAmount) || 0) > 0 ? toWholeAmount(keep.targetAmount) : toWholeAmount(effectiveTargetAmount),
-        amount: toWholeAmount(keep.amount),
-        quantity: 0,
-        refundDays: 0,
-        account: keep.userIdentifier || contract.userIdentifier || "",
-        slot: keep.productName || contract.products || "",
-        worker: keep.worker || contract.worker || "",
-        reason: keep.reason ? ("Keep refund: " + keep.reason) : "Keep refund",
-        previousPaymentMethod,
-        refundDate: new Date(),
-        createdBy: actor?.name || keep.createdBy || null,
-      }));
-
-      await storage.deleteKeep(keepId);
-      const paymentMethod = await syncFinancialPaymentMethod(keep.contractId);
-
-      res.status(201).json({
-        keepId,
-        contractId: keep.contractId,
-        paymentMethod,
-        refund,
-      });
-    } catch (error) {
-      console.error("Error converting keep to refund:", error);
-      res.status(500).json({ error: "Failed to convert keep to refund" });
-    }
-  });
-
-  app.post("/api/keeps/:id/reuse", async (req, res) => {
-    try {
-      const keepId = toSingleString(req.params.id);
-      const keep = await storage.getKeep(keepId);
-      if (!keep) {
-        return res.status(404).json({ error: "Keep not found" });
-      }
-
-      const actorName = await getCurrentUserName(req);
-      const updatedKeep = await storage.updateKeep(keepId, {
-        keepStatus: KEEP_STATUS_REUSE,
-        decisionBy: actorName,
-        decisionAt: new Date(),
-      });
-
-      await syncFinancialPaymentMethod(keep.contractId);
-
-      res.status(201).json({
-        keepId,
-        contractId: keep.contractId,
-        keep: updatedKeep,
-      });
-    } catch (error) {
-      console.error("Error reusing keep:", error);
-      res.status(500).json({ error: "Failed to reuse keep" });
-    }
-  });
   app.get("/api/permissions", async (_req, res) => {
     try {
       const permissions = await storage.getPagePermissions();
@@ -5359,931 +5074,6 @@ export async function registerRoutes(
       res.status(500).json({ error: "입금 업로드에 실패했습니다." });
     }
   });
-
-  app.get("/api/regional-unpaids", autoLoginDev, requireAuth, async (req, res) => {
-    try {
-      await ensureRegionalUnpaidStorageReady();
-
-      const result = await pool.query(`
-        SELECT id, columns_json, rows_json, imported_count, excluded_count, uploaded_by, created_at
-        FROM regional_unpaid_uploads
-        ORDER BY created_at DESC
-        LIMIT 1
-      `);
-
-      if (result.rows.length === 0) {
-        return res.json({
-          columns: [],
-          rows: [],
-          entries: [],
-          summary: {
-            unpaidCount: 0,
-            partialPaidCount: 0,
-            paidCompleteCount: 0,
-            totalUnpaidAmount: 0,
-            totalPaidAmount: 0,
-            totalRemainingAmount: 0,
-          },
-          importedCount: 0,
-          excludedCount: 0,
-          uploadedAt: null,
-          uploadedBy: null,
-        });
-      }
-
-      const latest = result.rows[0];
-
-      let columns: RegionalUnpaidColumn[] = [];
-      let rows: Record<string, unknown>[] = [];
-
-      try {
-        columns = JSON.parse(latest.columns_json || "[]");
-      } catch {
-        columns = [];
-      }
-
-      try {
-        rows = JSON.parse(latest.rows_json || "[]");
-      } catch {
-        rows = [];
-      }
-
-      const deals = await storage.getDeals();
-      const dealByBillingAccount = new Map<string, Deal>();
-      deals.forEach((deal) => {
-        const billingAccount = normalizeBillingAccountNumber(deal.billingAccountNumber);
-        if (!billingAccount) return;
-        const existing = dealByBillingAccount.get(billingAccount);
-        if (!existing) {
-          dealByBillingAccount.set(billingAccount, deal);
-          return;
-        }
-        if (existing.stage === "churned" && deal.stage !== "churned") {
-          dealByBillingAccount.set(billingAccount, deal);
-        }
-      });
-
-      const payerNameColumn = findRegionalUnpaidColumn(columns, "납부고객명");
-      const unpaidCycleColumn = findRegionalUnpaidColumn(columns, "미납회차");
-      const targetGuideColumn = findRegionalUnpaidColumn(columns, "대상안내");
-
-      const entriesWithRows = rows.map((row, index) => {
-        const safeRow = (row && typeof row === "object" ? row : {}) as Record<string, unknown>;
-        const fallbackRowId = `${latest.id || "regional-unpaid"}-${index}`;
-        const meta = ensureRegionalUnpaidRowMeta(safeRow, columns, fallbackRowId);
-        const matchedDeal = dealByBillingAccount.get(normalizeBillingAccountNumber(meta.billingAccountNumber));
-
-        return {
-          __row: safeRow,
-          rowId: meta.rowId,
-          billingAccountNumber: meta.billingAccountNumber,
-          status: meta.status,
-          unpaidTotalAmount: meta.unpaidTotalAmount,
-          paidTotalAmount: meta.paidTotalAmount,
-          remainingAmount: meta.remainingAmount,
-          monthItems: meta.monthItems,
-          paymentHistory: meta.paymentHistory,
-          customerName: matchedDeal?.title || (payerNameColumn ? normalizeText(safeRow[payerNameColumn.key]) : ""),
-          companyName: matchedDeal?.companyName || "",
-          phone: matchedDeal?.phone || "",
-          contractStatus: normalizeRegionalDealContractStatus(matchedDeal?.contractStatus, matchedDeal?.stage) || "",
-          totalLines: matchedDeal ? Math.max((Number(matchedDeal.lineCount) || 0) - (Number(matchedDeal.cancelledLineCount) || 0), 0) : 0,
-          unpaidCycle: unpaidCycleColumn ? normalizeText(safeRow[unpaidCycleColumn.key]) : "",
-          targetGuide: targetGuideColumn ? normalizeText(safeRow[targetGuideColumn.key]) : "",
-          matchedDealId: matchedDeal?.id || null,
-        };
-      });
-
-      const matchedOnly = String(req.query.matchedOnly || "").toLowerCase() === "true";
-      const scopedEntries = matchedOnly
-        ? entriesWithRows.filter((entry) => !!entry.matchedDealId && (entry.remainingAmount || 0) > 0)
-        : entriesWithRows.filter((entry) => entry.status !== REGIONAL_UNPAID_STATUS_COMPLETED);
-
-      const summary = scopedEntries.reduce(
-        (acc, entry) => {
-          if (entry.status === REGIONAL_UNPAID_STATUS_COMPLETED) acc.paidCompleteCount += 1;
-          else if (entry.status === REGIONAL_UNPAID_STATUS_PARTIAL) acc.partialPaidCount += 1;
-          else acc.unpaidCount += 1;
-          acc.totalUnpaidAmount += entry.unpaidTotalAmount || 0;
-          acc.totalPaidAmount += entry.paidTotalAmount || 0;
-          acc.totalRemainingAmount += entry.remainingAmount || 0;
-          return acc;
-        },
-        {
-          unpaidCount: 0,
-          partialPaidCount: 0,
-          paidCompleteCount: 0,
-          totalUnpaidAmount: 0,
-          totalPaidAmount: 0,
-          totalRemainingAmount: 0,
-        },
-      );
-
-      const scopedRows = scopedEntries.map((entry) => (entry.__row && typeof entry.__row === "object" ? entry.__row : {}));
-      const responseEntries = scopedEntries.map(({ __row, ...entry }) => entry);
-
-      return res.json({
-        columns,
-        rows: matchedOnly ? rows : scopedRows,
-        entries: responseEntries,
-        summary,
-        importedCount: Number(latest.imported_count) || 0,
-        excludedCount: Number(latest.excluded_count) || 0,
-        uploadedAt: latest.created_at || null,
-        uploadedBy: latest.uploaded_by || null,
-      });
-    } catch (error) {
-      console.error("Error fetching regional unpaid data:", error);
-      res.status(500).json({ error: "Failed to fetch regional unpaid data" });
-    }
-  });
-
-  const regionalUnpaidSettleSchema = z.object({
-    rowId: z.string().min(1, "행 식별값이 필요합니다."),
-    items: z.array(
-      z.object({
-        label: z.string().min(1, "월 항목 라벨이 필요합니다."),
-        amount: z.coerce.number().min(0.01, "납부 금액은 0보다 커야 합니다."),
-      }),
-    ).min(1, "최소 1개 이상의 월 항목을 선택해주세요."),
-  });
-
-  const regionalUnpaidRevertSchema = z.object({
-    rowId: z.string().min(1, "행 식별값이 필요합니다."),
-  });
-
-  const regionalUnpaidDeleteSchema = z.object({
-    rowIds: z.array(z.string().min(1, "행 식별값이 필요합니다.")).min(1, "삭제할 항목을 선택해주세요."),
-  });
-
-  app.post("/api/regional-unpaids/settle", autoLoginDev, requireAuth, async (req, res) => {
-    try {
-      await ensureRegionalUnpaidStorageReady();
-
-      const parsed = regionalUnpaidSettleSchema.safeParse(req.body);
-      if (!parsed.success) {
-        return res.status(400).json({ error: parsed.error.errors[0]?.message || "잘못된 요청입니다." });
-      }
-
-      const latestResult = await pool.query(`
-        SELECT id, columns_json, rows_json
-        FROM regional_unpaid_uploads
-        ORDER BY created_at DESC
-        LIMIT 1
-      `);
-
-      if (latestResult.rows.length === 0) {
-        return res.status(404).json({ error: "미납 업로드 데이터가 없습니다." });
-      }
-
-      const latest = latestResult.rows[0];
-      let columns: RegionalUnpaidColumn[] = [];
-      let rows: Record<string, unknown>[] = [];
-
-      try {
-        columns = JSON.parse(latest.columns_json || "[]");
-      } catch {
-        columns = [];
-      }
-      try {
-        rows = JSON.parse(latest.rows_json || "[]");
-      } catch {
-        rows = [];
-      }
-      const unpaidCycleColumn = findRegionalUnpaidColumn(columns, "미납회차");
-
-      let targetIndex = -1;
-      let targetRow: Record<string, unknown> | null = null;
-      let targetMeta: RegionalUnpaidRowMeta | null = null;
-
-      rows.forEach((row, index) => {
-        if (targetMeta) return;
-        const safeRow = (row && typeof row === "object" ? row : {}) as Record<string, unknown>;
-        const meta = ensureRegionalUnpaidRowMeta(safeRow, columns, `${latest.id || "regional-unpaid"}-${index}`);
-        if (meta.rowId === parsed.data.rowId) {
-          targetIndex = index;
-          targetRow = safeRow;
-          targetMeta = meta;
-        }
-      });
-
-      if (!targetRow || !targetMeta || targetIndex < 0) {
-        return res.status(404).json({ error: "선택한 미납 항목을 찾을 수 없습니다." });
-      }
-
-      const ensuredTargetRow = targetRow as Record<string, unknown>;
-      const ensuredTargetMeta = targetMeta as RegionalUnpaidRowMeta;
-
-      let monthItems = [...ensuredTargetMeta.monthItems];
-      if (monthItems.length === 0) {
-        monthItems = [
-          {
-            label: "미납금액",
-            originalAmount: Math.max(ensuredTargetMeta.unpaidTotalAmount, ensuredTargetMeta.remainingAmount),
-            paidAmount: Math.max(ensuredTargetMeta.paidTotalAmount, 0),
-            remainingAmount: Math.max(ensuredTargetMeta.remainingAmount, 0),
-          },
-        ];
-      }
-
-      const monthItemMap = new Map(monthItems.map((item) => [normalizeRegionalUnpaidToken(item.label), item]));
-      const appliedItems: Array<{ label: string; amount: number }> = [];
-      let appliedTotal = 0;
-
-      parsed.data.items.forEach((item) => {
-        const monthItem = monthItemMap.get(normalizeRegionalUnpaidToken(item.label));
-        if (!monthItem) return;
-        const payable = Math.max(monthItem.remainingAmount, 0);
-        if (payable <= 0) return;
-        const applyAmount = Math.min(Math.max(item.amount, 0), payable);
-        if (applyAmount <= 0) return;
-        monthItem.paidAmount += applyAmount;
-        monthItem.remainingAmount = Math.max(monthItem.originalAmount - monthItem.paidAmount, 0);
-        appliedItems.push({ label: monthItem.label, amount: applyAmount });
-        appliedTotal += applyAmount;
-      });
-
-      if (appliedTotal <= 0) {
-        return res.status(400).json({ error: "적용 가능한 납부 금액이 없습니다." });
-      }
-
-      const totalPaidAmount = monthItems.reduce((sum, item) => sum + item.paidAmount, 0);
-      const remainingAmount = Math.max(ensuredTargetMeta.unpaidTotalAmount - totalPaidAmount, 0);
-      const processedBy = await getCurrentUserName(req);
-
-      ensuredTargetMeta.monthItems = monthItems;
-      ensuredTargetMeta.paidTotalAmount = totalPaidAmount;
-      ensuredTargetMeta.remainingAmount = remainingAmount;
-      ensuredTargetMeta.status = computeRegionalUnpaidStatus(totalPaidAmount, remainingAmount);
-      ensuredTargetMeta.paymentHistory = [
-        {
-          processedAt: new Date().toISOString(),
-          processedBy,
-          totalPaidAmount: appliedTotal,
-          items: appliedItems,
-        },
-        ...(Array.isArray(ensuredTargetMeta.paymentHistory) ? ensuredTargetMeta.paymentHistory : []),
-      ];
-      if (unpaidCycleColumn) {
-        const remainingCycleCount = monthItems.filter((item) => item.remainingAmount > 0).length;
-        ensuredTargetRow[unpaidCycleColumn.key] = String(Math.max(remainingCycleCount, 0));
-      }
-      ensuredTargetRow.__meta = ensuredTargetMeta;
-      rows[targetIndex] = ensuredTargetRow;
-
-      await pool.query(
-        `
-          UPDATE regional_unpaid_uploads
-          SET rows_json = $1
-          WHERE id = $2
-        `,
-        [JSON.stringify(rows), latest.id],
-      );
-
-      return res.json({
-        rowId: ensuredTargetMeta.rowId,
-        status: ensuredTargetMeta.status,
-        appliedTotal,
-        paidTotalAmount: ensuredTargetMeta.paidTotalAmount,
-        remainingAmount: ensuredTargetMeta.remainingAmount,
-      });
-    } catch (error) {
-      console.error("Error settling regional unpaid row:", error);
-      return res.status(500).json({ error: "미납 납부완료 처리에 실패했습니다." });
-    }
-  });
-
-  app.post("/api/regional-unpaids/revert", autoLoginDev, requireAuth, async (req, res) => {
-    try {
-      await ensureRegionalUnpaidStorageReady();
-
-      const parsed = regionalUnpaidRevertSchema.safeParse(req.body);
-      if (!parsed.success) {
-        return res.status(400).json({ error: parsed.error.errors[0]?.message || "잘못된 요청입니다." });
-      }
-
-      const latestResult = await pool.query(`
-        SELECT id, columns_json, rows_json
-        FROM regional_unpaid_uploads
-        ORDER BY created_at DESC
-        LIMIT 1
-      `);
-
-      if (latestResult.rows.length === 0) {
-        return res.status(404).json({ error: "미납 업로드 데이터가 없습니다." });
-      }
-
-      const latest = latestResult.rows[0];
-      let columns: RegionalUnpaidColumn[] = [];
-      let rows: Record<string, unknown>[] = [];
-
-      try {
-        columns = JSON.parse(latest.columns_json || "[]");
-      } catch {
-        columns = [];
-      }
-      try {
-        rows = JSON.parse(latest.rows_json || "[]");
-      } catch {
-        rows = [];
-      }
-      const unpaidCycleColumn = findRegionalUnpaidColumn(columns, "미납회차");
-
-      let targetIndex = -1;
-      let targetRow: Record<string, unknown> | null = null;
-      let targetMeta: RegionalUnpaidRowMeta | null = null;
-
-      rows.forEach((row, index) => {
-        if (targetMeta) return;
-        const safeRow = (row && typeof row === "object" ? row : {}) as Record<string, unknown>;
-        const meta = ensureRegionalUnpaidRowMeta(safeRow, columns, `${latest.id || "regional-unpaid"}-${index}`);
-        if (meta.rowId === parsed.data.rowId) {
-          targetIndex = index;
-          targetRow = safeRow;
-          targetMeta = meta;
-        }
-      });
-
-      if (!targetRow || !targetMeta || targetIndex < 0) {
-        return res.status(404).json({ error: "선택한 미납 항목을 찾을 수 없습니다." });
-      }
-
-      const ensuredTargetRow = targetRow as Record<string, unknown>;
-      const ensuredTargetMeta = targetMeta as RegionalUnpaidRowMeta;
-
-      const revertedAmount = Math.max(ensuredTargetMeta.paidTotalAmount, 0);
-      const resetMonthItems = (Array.isArray(ensuredTargetMeta.monthItems) ? ensuredTargetMeta.monthItems : []).map((item) => {
-        const originalAmount = Math.max(0, toRegionalUnpaidAmount(item.originalAmount));
-        return {
-          ...item,
-          originalAmount,
-          paidAmount: 0,
-          remainingAmount: originalAmount,
-        };
-      });
-
-      const monthOriginalTotal = resetMonthItems.reduce((sum, item) => sum + item.originalAmount, 0);
-      const resetUnpaidTotal = Math.max(toRegionalUnpaidAmount(ensuredTargetMeta.unpaidTotalAmount), monthOriginalTotal);
-      const processedBy = await getCurrentUserName(req);
-
-      ensuredTargetMeta.monthItems = resetMonthItems;
-      ensuredTargetMeta.unpaidTotalAmount = resetUnpaidTotal;
-      ensuredTargetMeta.paidTotalAmount = 0;
-      ensuredTargetMeta.remainingAmount = resetUnpaidTotal;
-      ensuredTargetMeta.status = REGIONAL_UNPAID_STATUS_UNPAID;
-      ensuredTargetMeta.paymentHistory = [
-        {
-          processedAt: new Date().toISOString(),
-          processedBy,
-          totalPaidAmount: -revertedAmount,
-          items: [],
-        },
-        ...(Array.isArray(ensuredTargetMeta.paymentHistory) ? ensuredTargetMeta.paymentHistory : []),
-      ];
-      if (unpaidCycleColumn) {
-        const resetCycleCount = resetMonthItems.filter((item) => item.originalAmount > 0).length;
-        ensuredTargetRow[unpaidCycleColumn.key] = String(Math.max(resetCycleCount, 0));
-      }
-
-      ensuredTargetRow.__meta = ensuredTargetMeta;
-      rows[targetIndex] = ensuredTargetRow;
-
-      await pool.query(
-        `
-          UPDATE regional_unpaid_uploads
-          SET rows_json = $1
-          WHERE id = $2
-        `,
-        [JSON.stringify(rows), latest.id],
-      );
-
-      return res.json({
-        rowId: ensuredTargetMeta.rowId,
-        status: ensuredTargetMeta.status,
-        revertedAmount,
-        paidTotalAmount: ensuredTargetMeta.paidTotalAmount,
-        remainingAmount: ensuredTargetMeta.remainingAmount,
-      });
-    } catch (error) {
-      console.error("Error reverting regional unpaid row:", error);
-      return res.status(500).json({ error: "납부 철회 처리에 실패했습니다." });
-    }
-  });
-
-  app.post("/api/regional-unpaids/delete", autoLoginDev, requireAuth, async (req, res) => {
-    try {
-      await ensureRegionalUnpaidStorageReady();
-
-      const parsed = regionalUnpaidDeleteSchema.safeParse(req.body);
-      if (!parsed.success) {
-        return res.status(400).json({ error: parsed.error.errors[0]?.message || "잘못된 요청입니다." });
-      }
-
-      const latestResult = await pool.query(`
-        SELECT id, columns_json, rows_json
-        FROM regional_unpaid_uploads
-        ORDER BY created_at DESC
-        LIMIT 1
-      `);
-
-      if (latestResult.rows.length === 0) {
-        return res.status(404).json({ error: "미납 업로드 데이터가 없습니다." });
-      }
-
-      const latest = latestResult.rows[0];
-      let columns: RegionalUnpaidColumn[] = [];
-      let rows: Record<string, unknown>[] = [];
-
-      try {
-        columns = JSON.parse(latest.columns_json || "[]");
-      } catch {
-        columns = [];
-      }
-      try {
-        rows = JSON.parse(latest.rows_json || "[]");
-      } catch {
-        rows = [];
-      }
-
-      const rowIdSet = new Set(parsed.data.rowIds);
-      let deletedCount = 0;
-      const nextRows = rows.filter((row, index) => {
-        const safeRow = (row && typeof row === "object" ? row : {}) as Record<string, unknown>;
-        const meta = ensureRegionalUnpaidRowMeta(safeRow, columns, `${latest.id || "regional-unpaid"}-${index}`);
-        const shouldDelete = rowIdSet.has(meta.rowId);
-        if (shouldDelete) deletedCount += 1;
-        return !shouldDelete;
-      });
-
-      if (deletedCount === 0) {
-        return res.status(404).json({ error: "선택한 미납 항목을 찾을 수 없습니다." });
-      }
-
-      await pool.query(
-        `
-          UPDATE regional_unpaid_uploads
-          SET rows_json = $1,
-              imported_count = $2
-          WHERE id = $3
-        `,
-        [JSON.stringify(nextRows), nextRows.length, latest.id],
-      );
-
-      await writeSystemLog(req, {
-        actionType: "delete",
-        action: "미납DB 항목 삭제",
-        details: `deleted=${deletedCount}`,
-      });
-
-      return res.json({
-        deletedCount,
-        remainingCount: nextRows.length,
-      });
-    } catch (error) {
-      console.error("Error deleting regional unpaid rows:", error);
-      return res.status(500).json({ error: "미납 항목 삭제에 실패했습니다." });
-    }
-  });
-
-  app.post("/api/regional-unpaids/upload", autoLoginDev, requireAuth, upload.single("file"), async (req, res) => {
-    try {
-      await ensureRegionalUnpaidStorageReady();
-
-      if (!req.file) {
-        return res.status(400).json({ error: "\uC5D1\uC140 \uD30C\uC77C\uC744 \uC120\uD0DD\uD574\uC8FC\uC138\uC694." });
-      }
-
-      const parsed = parseRegionalUnpaidWorkbook(req.file.buffer);
-      if (parsed.columns.length === 0) {
-        return res.status(400).json({ error: "\u0032\uAC1C\uC6D4\uC774\uC0C1 \uC2DC\uD2B8\uC5D0 \uC720\uD6A8\uD55C \uCEEC\uB7FC\uC774 \uC5C6\uC2B5\uB2C8\uB2E4." });
-      }
-
-      const uploadedBy = await getCurrentUserName(req);
-
-      await pool.query("DELETE FROM regional_unpaid_uploads");
-      await pool.query(
-        `
-          INSERT INTO regional_unpaid_uploads
-            (columns_json, rows_json, imported_count, excluded_count, uploaded_by)
-          VALUES
-            ($1, $2, $3, $4, $5)
-        `,
-        [
-          JSON.stringify(parsed.columns),
-          JSON.stringify(parsed.rows),
-          parsed.rows.length,
-          parsed.excludedCount,
-          uploadedBy,
-        ],
-      );
-
-      await writeSystemLog(req, {
-        actionType: "excel_upload",
-        action: "미납 엑셀 업로드",
-        details: `file=${req.file.originalname}, imported=${parsed.rows.length}, excluded=${parsed.excludedCount}`,
-      });
-      res.json({
-        importedCount: parsed.rows.length,
-        excludedCount: parsed.excludedCount,
-      });
-    } catch (error) {
-      console.error("Error uploading regional unpaid excel:", error);
-      const message =
-        error instanceof Error ? error.message : "\uBBF8\uB0A9 \uC5D1\uC140 \uC5C5\uB85C\uB4DC\uC5D0 \uC2E4\uD328\uD588\uC2B5\uB2C8\uB2E4.";
-      const isValidationError = /\uC2DC\uD2B8|\uD5E4\uB354|\uCEEC\uB7FC|\uD30C\uC77C|\uC5D1\uC140/.test(message);
-      res.status(isValidationError ? 400 : 500).json({ error: message });
-    }
-  });
-
-  app.get("/api/regional-management-fees", autoLoginDev, requireAuth, async (_req, res) => {
-    try {
-      const items = await storage.getRegionalManagementFees();
-      const totalAmount = items.reduce((sum, item) => sum + Math.max(Number(item.amount) || 0, 0), 0);
-      res.json({
-        items,
-        totalAmount,
-        totalCount: items.length,
-      });
-    } catch (error) {
-      console.error("Error fetching regional management fees:", error);
-      res.status(500).json({ error: "관리비 목록 조회에 실패했습니다." });
-    }
-  });
-
-  app.post("/api/regional-management-fees", autoLoginDev, requireAuth, async (req, res) => {
-    try {
-      const body = { ...req.body } as Record<string, unknown>;
-      if (typeof body.feeDate === "string" && body.feeDate.trim()) {
-        body.feeDate = new Date(body.feeDate);
-      }
-      if (typeof body.amount === "string") {
-        body.amount = Math.round(Number(body.amount) || 0);
-      }
-      if (typeof body.productName === "string") {
-        body.productName = body.productName.trim();
-      }
-
-      const parsed = insertRegionalManagementFeeSchema.safeParse(body);
-      if (!parsed.success) {
-        return res.status(400).json({ error: parsed.error.errors[0]?.message || "관리비 등록 데이터가 올바르지 않습니다." });
-      }
-
-      const currentUserName = await getCurrentUserName(req);
-      const productName = parsed.data.productName.trim();
-      if (!productName) {
-        return res.status(400).json({ error: "상품명을 입력해주세요." });
-      }
-
-      const created = await storage.createRegionalManagementFee({
-        ...parsed.data,
-        amount: Math.max(Number(parsed.data.amount) || 0, 0),
-        productName,
-        createdBy: currentUserName,
-        updatedBy: currentUserName,
-      });
-
-      await writeSystemLog(req, {
-        actionType: "settings_change",
-        action: `타지역 관리비 등록: ${created.productName}`,
-        details: `feeDate=${getKoreanDateKey(created.feeDate) || ""}, amount=${created.amount}`,
-      });
-
-      res.status(201).json(created);
-    } catch (error) {
-      console.error("Error creating regional management fee:", error);
-      res.status(500).json({ error: "관리비 등록에 실패했습니다." });
-    }
-  });
-
-  app.put("/api/regional-management-fees/:id", autoLoginDev, requireAuth, async (req, res) => {
-    try {
-      const id = toSingleString(req.params.id);
-      const existing = await storage.getRegionalManagementFee(id);
-      if (!existing) {
-        return res.status(404).json({ error: "관리비 항목을 찾을 수 없습니다." });
-      }
-
-      const body = { ...req.body } as Record<string, unknown>;
-      if (typeof body.feeDate === "string" && body.feeDate.trim()) {
-        body.feeDate = new Date(body.feeDate);
-      } else if (body.feeDate === "") {
-        body.feeDate = undefined;
-      }
-      if (typeof body.amount === "string") {
-        body.amount = Math.round(Number(body.amount) || 0);
-      }
-      if (typeof body.productName === "string") {
-        body.productName = body.productName.trim();
-      }
-
-      const parsed = updateRegionalManagementFeeSchema.safeParse(body);
-      if (!parsed.success) {
-        return res.status(400).json({ error: parsed.error.errors[0]?.message || "관리비 수정 데이터가 올바르지 않습니다." });
-      }
-
-      if ("productName" in parsed.data && !String(parsed.data.productName || "").trim()) {
-        return res.status(400).json({ error: "상품명을 입력해주세요." });
-      }
-
-      const currentUserName = await getCurrentUserName(req);
-      const updated = await storage.updateRegionalManagementFee(id, {
-        ...parsed.data,
-        amount:
-          parsed.data.amount === undefined
-            ? undefined
-            : Math.max(Number(parsed.data.amount) || 0, 0),
-        productName:
-          parsed.data.productName === undefined
-            ? undefined
-            : String(parsed.data.productName).trim(),
-        updatedBy: currentUserName,
-      });
-
-      await writeSystemLog(req, {
-        actionType: "settings_change",
-        action: `타지역 관리비 수정: ${updated?.productName || existing.productName}`,
-        details: `feeDate=${getKoreanDateKey(updated?.feeDate || existing.feeDate) || ""}, amount=${updated?.amount ?? existing.amount}`,
-      });
-
-      res.json(updated);
-    } catch (error) {
-      console.error("Error updating regional management fee:", error);
-      res.status(500).json({ error: "관리비 수정에 실패했습니다." });
-    }
-  });
-
-  app.delete("/api/regional-management-fees/:id", autoLoginDev, requireAuth, async (req, res) => {
-    try {
-      const id = toSingleString(req.params.id);
-      const existing = await storage.getRegionalManagementFee(id);
-      if (!existing) {
-        return res.status(404).json({ error: "관리비 항목을 찾을 수 없습니다." });
-      }
-
-      await storage.deleteRegionalManagementFee(id);
-
-      await writeSystemLog(req, {
-        actionType: "settings_change",
-        action: `타지역 관리비 삭제: ${existing.productName}`,
-        details: `feeDate=${getKoreanDateKey(existing.feeDate) || ""}, amount=${existing.amount}`,
-      });
-
-      res.status(204).end();
-    } catch (error) {
-      console.error("Error deleting regional management fee:", error);
-      res.status(500).json({ error: "관리비 삭제에 실패했습니다." });
-    }
-  });
-
-  app.get("/api/regional-customer-list", autoLoginDev, requireAuth, async (_req, res) => {
-    try {
-      const columnConfig = await getRegionalCustomerListColumnConfig();
-      const items = (await storage.getRegionalCustomerLists()).map((item) =>
-        buildRegionalCustomerListResponseItem(item, columnConfig),
-      );
-      res.json({
-        items,
-        totalCount: items.length,
-      });
-    } catch (error) {
-      console.error("Error fetching regional customer list:", error);
-      res.status(500).json({ error: "고객리스트 조회에 실패했습니다." });
-    }
-  });
-
-  app.get("/api/regional-customer-list/config", autoLoginDev, requireAuth, async (_req, res) => {
-    try {
-      const columnConfig = await getRegionalCustomerListColumnConfig();
-      res.json({ columnConfig });
-    } catch (error) {
-      console.error("Error fetching regional customer list column config:", error);
-      res.status(500).json({ error: "고객리스트 컬럼 설정 조회에 실패했습니다." });
-    }
-  });
-
-  app.put(
-    "/api/regional-customer-list/config",
-    autoLoginDev,
-    requireAuth,
-    requireRegionalCustomerListManageAllowed,
-    async (req, res) => {
-      try {
-        if (!("columnConfig" in req.body)) {
-          return res.status(400).json({ error: "컬럼 설정 값이 없습니다." });
-        }
-
-        const columnConfig = await saveRegionalCustomerListColumnConfig(req.body.columnConfig);
-        const summaryText = REGIONAL_CUSTOMER_LIST_TIERS.map(
-          (tier) => `${tier}:${columnConfig[tier].length}`,
-        ).join(", ");
-
-        await writeSystemLog(req, {
-          actionType: "settings_change",
-          action: "타지역 고객리스트 컬럼 설정 수정",
-          details: summaryText,
-        });
-
-        res.json({ columnConfig });
-      } catch (error) {
-        console.error("Error updating regional customer list column config:", error);
-        res.status(500).json({ error: "고객리스트 컬럼 설정 저장에 실패했습니다." });
-      }
-    },
-  );
-
-  app.post("/api/regional-customer-list", autoLoginDev, requireAuth, requireRegionalCustomerListManageAllowed, async (req, res) => {
-    try {
-      const body = { ...req.body } as Record<string, unknown>;
-      const rawDetailColumns = body.detailColumns;
-      delete body.detailColumns;
-      if (typeof body.registrationCount === "string") {
-        body.registrationCount = Math.max(Number.parseInt(body.registrationCount, 10) || 0, 0);
-      }
-      if ("exposureNotice" in body) body.exposureNotice = Boolean(body.exposureNotice);
-      if ("blogReview" in body) body.blogReview = Boolean(body.blogReview);
-      if (typeof body.customerName === "string") body.customerName = body.customerName.trim();
-      if (typeof body.sameCustomer === "string") body.sameCustomer = body.sameCustomer.trim();
-      if (typeof body.csTimeline === "string") body.csTimeline = body.csTimeline.trim();
-      if (typeof body.tier === "string") body.tier = body.tier.trim();
-
-      const parsed = insertRegionalCustomerListSchema.safeParse(body);
-      if (!parsed.success) {
-        return res.status(400).json({ error: parsed.error.errors[0]?.message || "고객리스트 등록 데이터가 올바르지 않습니다." });
-      }
-
-      const customerName = String(parsed.data.customerName || "").trim();
-      const tier = String(parsed.data.tier || "").trim();
-      if (!customerName) {
-        return res.status(400).json({ error: "고객명을 입력해주세요." });
-      }
-      if (!isRegionalCustomerListTier(tier)) {
-        return res.status(400).json({ error: "탭 구간 값이 올바르지 않습니다." });
-      }
-
-      const columnConfig = await getRegionalCustomerListColumnConfig();
-      const currentUserName = await getCurrentUserName(req);
-      const existingItems = await storage.getRegionalCustomerLists();
-      const maxSortOrder = existingItems
-        .filter((item) => item.tier === tier)
-        .reduce((max, item) => Math.max(max, Number(item.sortOrder) || 0), 0);
-      const storedValues = resolveRegionalCustomerListStoredValues(
-        tier,
-        {
-          ...parsed.data,
-          detailColumns: rawDetailColumns,
-        },
-        columnConfig,
-        undefined,
-      );
-
-      const created = await storage.createRegionalCustomerList({
-        ...parsed.data,
-        tier,
-        customerName,
-        registrationCount: Math.max(Number(parsed.data.registrationCount) || 0, 0),
-        sameCustomer: parsed.data.sameCustomer ? String(parsed.data.sameCustomer).trim() : null,
-        csTimeline: storedValues.csTimeline,
-        exposureNotice: storedValues.exposureNotice,
-        blogReview: storedValues.blogReview,
-        sortOrder: Number(parsed.data.sortOrder) || maxSortOrder + 1,
-        createdBy: currentUserName,
-        updatedBy: currentUserName,
-      });
-
-      await writeSystemLog(req, {
-        actionType: "settings_change",
-        action: `타지역 고객리스트 등록: ${created.customerName}`,
-        details: `tier=${created.tier}, registrationCount=${created.registrationCount}`,
-      });
-
-      res.status(201).json(buildRegionalCustomerListResponseItem(created, columnConfig));
-    } catch (error) {
-      console.error("Error creating regional customer list item:", error);
-      res.status(500).json({ error: "고객리스트 등록에 실패했습니다." });
-    }
-  });
-
-  app.put("/api/regional-customer-list/:id", autoLoginDev, requireAuth, requireRegionalCustomerListManageAllowed, async (req, res) => {
-    try {
-      const id = toSingleString(req.params.id);
-      const existing = await storage.getRegionalCustomerList(id);
-      if (!existing) {
-        return res.status(404).json({ error: "고객리스트 항목을 찾을 수 없습니다." });
-      }
-
-      const body = { ...req.body } as Record<string, unknown>;
-      const rawDetailColumns = body.detailColumns;
-      delete body.detailColumns;
-      if (typeof body.registrationCount === "string") {
-        body.registrationCount = Math.max(Number.parseInt(body.registrationCount, 10) || 0, 0);
-      }
-      if ("exposureNotice" in body) body.exposureNotice = Boolean(body.exposureNotice);
-      if ("blogReview" in body) body.blogReview = Boolean(body.blogReview);
-      if (typeof body.customerName === "string") body.customerName = body.customerName.trim();
-      if (typeof body.sameCustomer === "string") body.sameCustomer = body.sameCustomer.trim();
-      if (typeof body.csTimeline === "string") body.csTimeline = body.csTimeline.trim();
-      if (typeof body.tier === "string") body.tier = body.tier.trim();
-
-      const parsed = updateRegionalCustomerListSchema.safeParse(body);
-      if (!parsed.success) {
-        return res.status(400).json({ error: parsed.error.errors[0]?.message || "고객리스트 수정 데이터가 올바르지 않습니다." });
-      }
-
-      if ("customerName" in parsed.data && !String(parsed.data.customerName || "").trim()) {
-        return res.status(400).json({ error: "고객명을 입력해주세요." });
-      }
-      if ("tier" in parsed.data && !isRegionalCustomerListTier(String(parsed.data.tier || "").trim())) {
-        return res.status(400).json({ error: "탭 구간 값이 올바르지 않습니다." });
-      }
-
-      const columnConfig = await getRegionalCustomerListColumnConfig();
-      const currentUserName = await getCurrentUserName(req);
-      const nextTier = String(parsed.data.tier || existing.tier || "").trim();
-      const storedValues = resolveRegionalCustomerListStoredValues(
-        nextTier,
-        {
-          ...parsed.data,
-          detailColumns: rawDetailColumns,
-        },
-        columnConfig,
-        existing,
-      );
-      const updated = await storage.updateRegionalCustomerList(id, {
-        ...parsed.data,
-        customerName:
-          parsed.data.customerName === undefined ? undefined : String(parsed.data.customerName).trim(),
-        tier: parsed.data.tier === undefined ? undefined : String(parsed.data.tier).trim(),
-        registrationCount:
-          parsed.data.registrationCount === undefined
-            ? undefined
-            : Math.max(Number(parsed.data.registrationCount) || 0, 0),
-        sameCustomer:
-          parsed.data.sameCustomer === undefined
-            ? undefined
-            : String(parsed.data.sameCustomer).trim() || null,
-        csTimeline:
-          parsed.data.csTimeline === undefined &&
-          rawDetailColumns === undefined &&
-          parsed.data.exposureNotice === undefined &&
-          parsed.data.blogReview === undefined &&
-          parsed.data.tier === undefined
-            ? undefined
-            : storedValues.csTimeline,
-        exposureNotice:
-          parsed.data.csTimeline === undefined &&
-          parsed.data.exposureNotice === undefined &&
-          parsed.data.blogReview === undefined &&
-          rawDetailColumns === undefined &&
-          parsed.data.tier === undefined
-            ? undefined
-            : storedValues.exposureNotice,
-        blogReview:
-          parsed.data.csTimeline === undefined &&
-          parsed.data.exposureNotice === undefined &&
-          parsed.data.blogReview === undefined &&
-          rawDetailColumns === undefined &&
-          parsed.data.tier === undefined
-            ? undefined
-            : storedValues.blogReview,
-        updatedBy: currentUserName,
-      });
-
-      await writeSystemLog(req, {
-        actionType: "settings_change",
-        action: `타지역 고객리스트 수정: ${updated?.customerName || existing.customerName}`,
-        details: `tier=${updated?.tier || existing.tier}, registrationCount=${updated?.registrationCount ?? existing.registrationCount}`,
-      });
-
-      res.json(updated ? buildRegionalCustomerListResponseItem(updated, columnConfig) : updated);
-    } catch (error) {
-      console.error("Error updating regional customer list item:", error);
-      res.status(500).json({ error: "고객리스트 수정에 실패했습니다." });
-    }
-  });
-
-  app.delete("/api/regional-customer-list/:id", autoLoginDev, requireAuth, requireRegionalCustomerListManageAllowed, async (req, res) => {
-    try {
-      const id = toSingleString(req.params.id);
-      const existing = await storage.getRegionalCustomerList(id);
-      if (!existing) {
-        return res.status(404).json({ error: "고객리스트 항목을 찾을 수 없습니다." });
-      }
-
-      await storage.deleteRegionalCustomerList(id);
-
-      await writeSystemLog(req, {
-        actionType: "settings_change",
-        action: `타지역 고객리스트 삭제: ${existing.customerName}`,
-        details: `tier=${existing.tier}, registrationCount=${existing.registrationCount}`,
-      });
-
-      res.status(204).end();
-    } catch (error) {
-      console.error("Error deleting regional customer list item:", error);
-      res.status(500).json({ error: "고객리스트 삭제에 실패했습니다." });
-    }
-  });
-
   app.put("/api/deposits/:id", autoLoginDev, requireAuth, async (req, res) => {
     try {
       const { contractIds, refundIds, confirmedAmount, depositDate, depositorName, depositAmount, depositBank, notes } = req.body;
@@ -8321,7 +7111,6 @@ export async function registerRoutes(
         "작업자": "workerName",
         "계산서발행": "invoiceIssued",
         "결제확인": "paymentConfirmed",
-        "지급현황": "disbursementStatus",
         "비고": "notes",
       };
 
@@ -8347,7 +7136,6 @@ export async function registerRoutes(
         "작업자": "workerName",
         "계산서발행": "invoiceIssued",
         "결제확인": "paymentConfirmed",
-        "지급현황": "disbursementStatus",
         "비고": "notes",
       };
 
@@ -8967,7 +7755,7 @@ export async function registerRoutes(
           headers: ["날짜", "요청", "사용자", "담당자", "품명", "단가", "일수", "수량", "결제금액", "작업자", "계산서발행", "결제확인", "비고"],
         },
         바이럴: {
-          headers: ["날짜", "신청업체", "담당자", "상품", "단가", "일수", "수량", "총금액(공급가)", "작업자", "계산서발행", "결제확인", "지급현황", "비고"],
+          headers: ["날짜", "신청업체", "담당자", "상품", "단가", "일수", "수량", "총금액(공급가)", "작업자", "계산서발행", "결제확인", "비고"],
         },
       });
     } catch (error) {
@@ -8978,4 +7766,7 @@ export async function registerRoutes(
 
   return httpServer;
 }
+
+
+
 

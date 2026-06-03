@@ -40,7 +40,7 @@ import { useToast } from "@/hooks/use-toast";
 import type { User } from "@shared/schema";
 
 const roleOptions = ["A", "B"];
-const departmentOptions = ["개발팀", "마케팅팀", "경영진", "경영지원팀", "타지역팀"];
+const departmentOptions = ["개발팀", "마케팅팀", "경영진", "경영지원팀"];
 const WORK_STATUS_EMPLOYED = "\uC7AC\uC9C1\uC911";
 const WORK_STATUS_ON_LEAVE = "\uD734\uC9C1\uC911";
 const WORK_STATUS_RESIGNED = "\uD1F4\uC0AC";

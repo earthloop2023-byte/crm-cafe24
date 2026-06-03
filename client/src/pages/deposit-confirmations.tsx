@@ -36,7 +36,7 @@ type MatchProductItem = {
 };
 
 const DEFAULT_DEPOSIT_BANK = "국민은행";
-const DEPOSIT_BANK_OPTIONS = ["국민은행", "하나은행", "농협은행", "카드결제", "크몽", "기타"] as const;
+const DEPOSIT_BANK_OPTIONS = ["국민은행", "카드결제", "크몽", "기타"] as const;
 const DEPOSIT_BANK_OPTION_SET = new Set<string>(DEPOSIT_BANK_OPTIONS);
 
 function normalizeDepositBankOption(value: unknown, fallback = DEFAULT_DEPOSIT_BANK) {
@@ -45,13 +45,11 @@ function normalizeDepositBankOption(value: unknown, fallback = DEFAULT_DEPOSIT_B
   const asciiKey = normalized.replace(/[_-]/g, "").toLowerCase();
 
   if (!normalized) return fallback;
-  if (["하나", "하나은행"].includes(normalized) || ["hana", "hanabank"].includes(asciiKey)) return "하나은행";
   if (["국민", "국민은행"].includes(normalized) || ["kb", "kookmin", "kbstar"].includes(asciiKey)) return "국민은행";
-  if (["농협", "농협은행"].includes(normalized) || ["nonghyup", "nh"].includes(asciiKey)) return "농협은행";
-  if (["카드결제"].includes(normalized) || ["card", "cardpayment", "creditcard"].includes(asciiKey)) return "카드결제";
+  if (["카드결제", "카드 결제"].includes(normalized) || ["card", "cardpayment", "creditcard"].includes(asciiKey)) return "카드결제";
   if (["크몽"].includes(normalized) || ["kmong"].includes(asciiKey)) return "크몽";
   if (normalized === "기타" || asciiKey === "other") return "기타";
-  return DEPOSIT_BANK_OPTION_SET.has(raw) ? raw : fallback;
+  return DEPOSIT_BANK_OPTION_SET.has(raw) ? raw : "기타";
 }
 
 function getDepositBankDisplayLabel(value: unknown) {

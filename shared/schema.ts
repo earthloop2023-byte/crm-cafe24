@@ -1,4 +1,4 @@
-﻿import { sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { pgTable, text, varchar, timestamp, integer, boolean } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -257,7 +257,6 @@ export type SystemLog = typeof systemLogs.$inferSelect;
 
 export const productCategories = [
   "슬롯",
-  "타지역상품",
   "바이럴상품",
   "기타",
 ] as const;
@@ -543,49 +542,6 @@ export const insertDatabaseBackupSchema = createInsertSchema(databaseBackups).om
 export type InsertDatabaseBackup = z.infer<typeof insertDatabaseBackupSchema>;
 export type DatabaseBackup = typeof databaseBackups.$inferSelect;
 
-export const quotations = pgTable("quotations", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  quotationNumber: text("quotation_number").notNull(),
-  quotationDate: timestamp("quotation_date").notNull(),
-  validUntil: timestamp("valid_until"),
-  customerName: text("customer_name").notNull(),
-  customerCompany: text("customer_company"),
-  customerPhone: text("customer_phone"),
-  customerEmail: text("customer_email"),
-  projectName: text("project_name"),
-  bankType: text("bank_type").default("bank1"),
-  items: text("items").notNull(),
-  subtotal: integer("subtotal").notNull().default(0),
-  vatAmount: integer("vat_amount").notNull().default(0),
-  totalAmount: integer("total_amount").notNull().default(0),
-  notes: text("notes"),
-  createdById: varchar("created_by_id").references(() => users.id),
-  createdByName: text("created_by_name").notNull(),
-  createdByEmail: text("created_by_email"),
-  createdByPhone: text("created_by_phone"),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-});
-
-export const insertQuotationSchema = createInsertSchema(quotations).omit({
-  id: true,
-  createdAt: true,
-});
-
-export type InsertQuotation = z.infer<typeof insertQuotationSchema>;
-export type Quotation = typeof quotations.$inferSelect;
-
-export interface QuotationItem {
-  productName: string;
-  category: string;
-  description: string;
-  quantity: number;
-  unitPrice: number;
-  unitPriceText?: string;
-  amount: number;
-  vatType: string;
-  remark: string;
-}
-
 export const importBatches = pgTable("import_batches", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").references(() => users.id),
@@ -663,10 +619,6 @@ export type ImportMapping = typeof importMappings.$inferSelect;
 export const allPages = [
   { key: "sales_analytics", label: "매출분석", path: "/analytics/sales" },
   { key: "deals", label: "고객DB", path: "/deals" },
-  { key: "regional_customer_list", label: "고객리스트", path: "/regional-customer-list" },
-  { key: "regional_unpaids", label: "미납", path: "/regional-unpaids" },
-  { key: "regional_unpaid_db", label: "미납DB", path: "/regional-unpaid-db" },
-  { key: "regional_management_fees", label: "관리비", path: "/regional-management-fees" },
   { key: "activities", label: "활동관리", path: "/activities" },
   { key: "timeline", label: "타임라인", path: "/timeline" },
   { key: "contracts", label: "계약관리", path: "/contracts" },
@@ -676,10 +628,8 @@ export const allPages = [
   { key: "deposit_confirmations", label: "입금확인", path: "/deposit-confirmations" },
   { key: "customers", label: "고객관리", path: "/customers" },
   { key: "products", label: "상품", path: "/products" },
-  { key: "quotations", label: "견적서", path: "/quotations" },
   { key: "notice", label: "공지사항", path: "/notice" },
   { key: "users", label: "사용자관리", path: "/settings/users" },
-  { key: "org_chart", label: "조직도", path: "/settings/org" },
   { key: "system_logs", label: "시스템로그", path: "/settings/logs" },
   { key: "permissions", label: "권한설정", path: "/settings/permissions" },
   { key: "system_settings", label: "시스템설정", path: "/settings/system" },
@@ -687,8 +637,7 @@ export const allPages = [
 ] as const;
 
 export const departmentDefaultPages: Record<string, string[]> = {
-  "마케팅팀": ["contracts", "customers", "deposit_confirmations", "products", "org_chart", "sales_analytics", "notice"],
-  "타지역팀": ["deals", "regional_customer_list", "regional_unpaids", "regional_unpaid_db", "regional_management_fees", "sales_analytics", "products", "quotations", "notice"],
+  "마케팅팀": ["contracts", "customers", "deposit_confirmations", "products", "sales_analytics", "notice"],
   "경영지원팀": ["sales_analytics", "payments", "receivables", "deposit_confirmations", "notice"],
   "경영지원실": ["sales_analytics", "payments", "receivables", "deposit_confirmations", "notice"],
 };

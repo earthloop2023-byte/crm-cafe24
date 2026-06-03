@@ -27,13 +27,7 @@ import { ShieldX } from "lucide-react";
 import LoginPage from "@/pages/login";
 import NotFound from "@/pages/not-found";
 import CustomersPage from "@/pages/customers";
-import DealsPage from "@/pages/deals";
-import RegionalCustomerListPage from "@/pages/regional-customer-list";
-import RegionalUnpaidsPage from "@/pages/regional-unpaids";
-import RegionalUnpaidDbPage from "@/pages/regional-unpaid-db";
-import RegionalManagementFeesPage from "@/pages/regional-management-fees";
 import ActivitiesPage from "@/pages/activities";
-import OrgChart from "@/pages/org-chart";
 import UsersPage from "@/pages/users";
 import TimelinePage from "@/pages/timeline";
 import SalesAnalyticsPage from "@/pages/sales-analytics";
@@ -49,7 +43,6 @@ import DepositConfirmationsPage from "@/pages/deposit-confirmations";
 import NoticesPage from "@/pages/notices";
 import BackupPage from "@/pages/backup";
 import AdminPage from "@/pages/admin";
-import QuotationsPage from "@/pages/quotations";
 
 function AccessDenied() {
   return (
@@ -88,23 +81,16 @@ function Router() {
     <Switch>
       <Route path="/">{() => <ProtectedRoute path="/analytics/sales" component={SalesAnalyticsPage} />}</Route>
       <Route path="/customers">{() => <ProtectedRoute path="/customers" component={CustomersPage} />}</Route>
-      <Route path="/deals">{() => <ProtectedRoute path="/deals" component={DealsPage} />}</Route>
-      <Route path="/regional-customer-list">{() => <ProtectedRoute path="/regional-customer-list" component={RegionalCustomerListPage} />}</Route>
-      <Route path="/regional-unpaids">{() => <ProtectedRoute path="/regional-unpaids" component={RegionalUnpaidsPage} />}</Route>
-      <Route path="/regional-unpaid-db">{() => <ProtectedRoute path="/regional-unpaid-db" component={RegionalUnpaidDbPage} />}</Route>
-      <Route path="/regional-management-fees">{() => <ProtectedRoute path="/regional-management-fees" component={RegionalManagementFeesPage} />}</Route>
       <Route path="/activities">{() => <ProtectedRoute path="/activities" component={ActivitiesPage} />}</Route>
       <Route path="/timeline">{() => <ProtectedRoute path="/timeline" component={TimelinePage} />}</Route>
       <Route path="/analytics/sales">{() => <ProtectedRoute path="/analytics/sales" component={SalesAnalyticsPage} />}</Route>
       <Route path="/payments">{() => <ProtectedRoute path="/payments" component={PaymentsPage} />}</Route>
       <Route path="/refunds">{() => <ProtectedRoute path="/refunds" component={RefundsPage} />}</Route>
-      <Route path="/settings/org">{() => <ProtectedRoute path="/settings/org" component={OrgChart} />}</Route>
       <Route path="/settings/users">{() => <ProtectedRoute path="/settings/users" component={UsersPage} />}</Route>
       <Route path="/settings/logs">{() => <ProtectedRoute path="/settings/logs" component={SystemLogsPage} />}</Route>
       <Route path="/settings/permissions">{() => <ProtectedRoute path="/settings/permissions" component={PermissionsPage} />}</Route>
       <Route path="/settings/system">{() => <ProtectedRoute path="/settings/system" component={SystemSettingsPage} />}</Route>
       <Route path="/products">{() => <ProtectedRoute path="/products" component={ProductsPage} />}</Route>
-      <Route path="/quotations">{() => <ProtectedRoute path="/quotations" component={QuotationsPage} />}</Route>
       <Route path="/contracts">{() => <ProtectedRoute path="/contracts" component={ContractsPage} />}</Route>
       <Route path="/receivables">{() => <ProtectedRoute path="/receivables" component={ReceivablesPage} />}</Route>
       <Route path="/deposit-confirmations">{() => <ProtectedRoute path="/deposit-confirmations" component={DepositConfirmationsPage} />}</Route>

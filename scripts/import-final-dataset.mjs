@@ -21,7 +21,6 @@ const CLEAR_ONLY_TABLES = [
   "customer_files",
   "activities",
   "refunds",
-  "keeps",
   "import_batches",
   "import_staging_rows",
   "import_mappings",
@@ -30,7 +29,6 @@ const CLEAR_ONLY_TABLES = [
 const PRESERVED_TABLES = [
   "deals",
   "deal_timelines",
-  "regional_unpaid_uploads",
 ];
 
 const INSERT_ORDER = [
@@ -318,7 +316,6 @@ async function main() {
   );
 
   importedTables.refunds = [];
-  importedTables.keeps = [];
   importedTables.contacts = [];
   importedTables.customer_counselings = [];
   importedTables.customer_change_histories = [];
@@ -392,7 +389,6 @@ async function main() {
 
       report.insertedCounts.deals = await insertRows(client, "deals", preservedRows.deals);
       report.insertedCounts.deal_timelines = await insertRows(client, "deal_timelines", preservedRows.deal_timelines);
-      report.insertedCounts.regional_unpaid_uploads = await insertRows(client, "regional_unpaid_uploads", preservedRows.regional_unpaid_uploads);
 
       await client.query("COMMIT");
     }

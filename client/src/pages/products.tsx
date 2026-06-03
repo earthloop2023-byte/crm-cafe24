@@ -18,7 +18,6 @@ import { productCategories, type Product, type InsertProduct, type ProductRateHi
 const PRODUCT_DETAIL_CUSTOM_VALUE = "__CUSTOM_PRODUCT_DETAIL__";
 const DEFAULT_PRODUCT_DETAIL_BY_GROUP: Record<string, string> = {
   슬롯: "슬롯",
-  타지역상품: "타지역서비스",
   바이럴상품: "바이럴상품",
   기타: "기타",
 };
@@ -39,15 +38,10 @@ function normalizeProductCategoryGroup(value: unknown): string {
   const compact = normalizeCategoryKey(raw);
 
   if (!compact) return "기타";
-  if (compact.includes("타지역")) return "타지역상품";
   if (compact.includes("슬롯")) return "슬롯";
   if (compact.includes("바이럴")) return "바이럴상품";
   if (compact === "기타") return "기타";
   return "기타";
-}
-
-function isRegionalCategory(value: unknown): boolean {
-  return normalizeCategoryKey(value).includes("타지역");
 }
 
 function resolveProductDetail(category: unknown, unit: unknown): string {
@@ -60,7 +54,7 @@ function resolveProductDetail(category: unknown, unit: unknown): string {
     return DEFAULT_PRODUCT_DETAIL_BY_GROUP[categoryGroup] || "";
   }
 
-  if (categoryGroup === "슬롯" || categoryGroup === "타지역상품") {
+  if (categoryGroup === "슬롯") {
     return categoryLabel;
   }
 
@@ -182,10 +176,6 @@ export default function ProductsPage() {
       toast({ title: "올바른 상품구분을 선택해주세요.", variant: "destructive" });
       return;
     }
-    if (user?.department === "타지역팀" && !isRegionalCategory(resolvedCategory)) {
-      toast({ title: "타지역팀은 타지역 카테고리 상품만 등록할 수 있습니다.", variant: "destructive" });
-      return;
-    }
     const payload = {
       ...formData,
       category: resolvedCategory,
@@ -218,9 +208,7 @@ export default function ProductsPage() {
     setEffectiveFrom(new Date().toISOString().split("T")[0]);
   };
 
-  const visibleProducts = user?.department === "타지역팀"
-    ? products.filter((product) => isRegionalCategory(product.category))
-    : products;
+  const visibleProducts = products;
 
   const filteredProducts = visibleProducts.filter((product) =>
     product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -228,8 +216,8 @@ export default function ProductsPage() {
   );
 
   const categoryOptions = useMemo(() => {
-    return productCategories.filter((category) => user?.department !== "타지역팀" || isRegionalCategory(category));
-  }, [user?.department]);
+    return productCategories;
+  }, []);
 
   const productDetailOptionsByCategory = useMemo(() => {
     const optionMap = new Map<string, string[]>();

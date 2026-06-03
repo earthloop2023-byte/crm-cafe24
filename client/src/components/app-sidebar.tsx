@@ -26,7 +26,6 @@ import {
   Bell,
   LogOut,
   ChevronDown,
-  Package,
   Calculator,
 } from "lucide-react";
 import { usePermissions } from "@/lib/permissions";
@@ -46,11 +45,12 @@ const menuItems: MenuItem[] = [
     children: [{ title: "\uB9E4\uCD9C\uBD84\uC11D", url: "/analytics/sales" }],
   },
   {
-    title: "\uB9C8\uCF00\uD305 \uBCF8\uBD80",
+    title: "\uACC4\uC57D/\uB9E4\uCD9C",
     icon: FileText,
     children: [
       { title: "\uACC4\uC57D\uAD00\uB9AC", url: "/contracts" },
       { title: "\uACE0\uAC1D\uAD00\uB9AC", url: "/customers" },
+      { title: "\uC0C1\uD488\uAD00\uB9AC", url: "/products" },
     ],
   },
   {
@@ -64,19 +64,10 @@ const menuItems: MenuItem[] = [
     ],
   },
   {
-    title: "\uC0C1\uD488/\uACAC\uC801\uAD00\uB9AC",
-    icon: Package,
-    children: [
-      { title: "\uC0C1\uD488", url: "/products" },
-      { title: "\uACAC\uC801\uC11C", url: "/quotations" },
-    ],
-  },
-  {
     title: "\uC124\uC815",
     icon: Settings,
     children: [
       { title: "\uC0AC\uC6A9\uC790\uAD00\uB9AC", url: "/settings/users" },
-      { title: "\uC870\uC9C1\uB3C4", url: "/settings/org" },
       { title: "\uC2DC\uC2A4\uD15C\uB85C\uADF8", url: "/settings/logs" },
       { title: "\uAD8C\uD55C\uC124\uC815", url: "/settings/permissions" },
       { title: "\uC2DC\uC2A4\uD15C\uC124\uC815", url: "/settings/system" },
@@ -88,9 +79,8 @@ export function AppSidebar() {
   const [location] = useLocation();
   const [openMenus, setOpenMenus] = useState<string[]>([
     "\uD1B5\uACC4/\uBD84\uC11D",
-    "\uB9C8\uCF00\uD305 \uBCF8\uBD80",
+    "\uACC4\uC57D/\uB9E4\uCD9C",
     "\uC7AC\uBB34/\uD68C\uACC4",
-    "\uC0C1\uD488/\uACAC\uC801\uAD00\uB9AC",
     "\uC124\uC815",
   ]);
   const { hasPathAccess } = usePermissions();

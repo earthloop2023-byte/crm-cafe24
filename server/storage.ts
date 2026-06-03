@@ -63,9 +63,6 @@ import {
   databaseBackups,
   type DatabaseBackup,
   type InsertDatabaseBackup,
-  quotations,
-  type Quotation,
-  type InsertQuotation,
   importBatches,
   importStagingRows,
   importMappings,
@@ -205,13 +202,6 @@ export interface IStorage {
   createBackup(backup: InsertDatabaseBackup): Promise<DatabaseBackup>;
   deleteBackup(id: string): Promise<void>;
 
-  getQuotations(): Promise<Quotation[]>;
-  getQuotation(id: string): Promise<Quotation | undefined>;
-  createQuotation(quotation: InsertQuotation): Promise<Quotation>;
-  updateQuotation(id: string, quotation: Partial<InsertQuotation>): Promise<Quotation | undefined>;
-  deleteQuotation(id: string): Promise<void>;
-  getNextQuotationNumber(): Promise<string>;
-
   getImportBatches(): Promise<ImportBatch[]>;
   getImportBatch(id: string): Promise<ImportBatch | undefined>;
   createImportBatch(batch: InsertImportBatch): Promise<ImportBatch>;
@@ -261,7 +251,6 @@ const CONTRACT_PII_FIELDS = [...STORAGE_PII_FIELDS.contracts];
 const REFUND_PII_FIELDS = [...STORAGE_PII_FIELDS.refunds];
 const KEEP_PII_FIELDS = [...STORAGE_PII_FIELDS.keeps];
 const DEPOSIT_PII_FIELDS = [...STORAGE_PII_FIELDS.deposits];
-const QUOTATION_PII_FIELDS = [...STORAGE_PII_FIELDS.quotations];
 
 function encryptPiiRow<T extends Record<string, any>>(row: T, fields: readonly string[]): T {
   return encryptRecordFields(row, fields);
@@ -1242,46 +1231,6 @@ export class DatabaseStorage implements IStorage {
     await db.delete(databaseBackups).where(eq(databaseBackups.id, id));
   }
 
-  async getQuotations(): Promise<Quotation[]> {
-    const results = await db.select().from(quotations).orderBy(desc(quotations.createdAt));
-    return results.map((row) => decryptPiiRow(row, QUOTATION_PII_FIELDS));
-  }
-
-  async getQuotation(id: string): Promise<Quotation | undefined> {
-    const [quotation] = await db.select().from(quotations).where(eq(quotations.id, id));
-    return quotation ? decryptPiiRow(quotation, QUOTATION_PII_FIELDS) : undefined;
-  }
-
-  async createQuotation(quotation: InsertQuotation): Promise<Quotation> {
-    const [created] = await db.insert(quotations).values(encryptPiiRow(quotation, QUOTATION_PII_FIELDS)).returning();
-    return decryptPiiRow(created, QUOTATION_PII_FIELDS);
-  }
-
-  async updateQuotation(id: string, quotation: Partial<InsertQuotation>): Promise<Quotation | undefined> {
-    const [updated] = await db
-      .update(quotations)
-      .set(encryptPiiRow(quotation, QUOTATION_PII_FIELDS))
-      .where(eq(quotations.id, id))
-      .returning();
-    return updated ? decryptPiiRow(updated, QUOTATION_PII_FIELDS) : undefined;
-  }
-
-  async deleteQuotation(id: string): Promise<void> {
-    await db.delete(quotations).where(eq(quotations.id, id));
-  }
-
-  async getNextQuotationNumber(): Promise<string> {
-    const now = new Date();
-    const prefix = `Q${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}`;
-    const result = await db.select({ quotationNumber: quotations.quotationNumber })
-      .from(quotations)
-      .where(sql`${quotations.quotationNumber} LIKE ${prefix + '%'}`)
-      .orderBy(desc(quotations.quotationNumber))
-      .limit(1);
-    if (result.length === 0) return `${prefix}-001`;
-    const lastNum = parseInt(result[0].quotationNumber.split("-").pop() || "0");
-    return `${prefix}-${String(lastNum + 1).padStart(3, "0")}`;
-  }
   async getImportBatches(): Promise<ImportBatch[]> {
     return db.select().from(importBatches).orderBy(desc(importBatches.createdAt));
   }

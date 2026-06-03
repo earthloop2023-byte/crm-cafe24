@@ -30,7 +30,6 @@ import { CustomCalendar } from "@/components/custom-calendar";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import { getFinancialAmountWithVat, getFinancialTargetGrossAmount } from "@/lib/contract-financials";
 import { format } from "date-fns";
 import { ko } from "date-fns/locale";
 import type { Contract, Deposit, InsertContract, User, Customer, Product, ProductRateHistory, Refund } from "@shared/schema";
@@ -43,8 +42,8 @@ import { matchesKoreanSearch } from "@shared/korean-search";
 const DEFAULT_CREATE_PAYMENT_METHOD = "입금 전";
 const DEFAULT_CREATE_DEPOSIT_BANK = "국민은행";
 const DEFAULT_CREATE_VAT_TYPE = "포함";
-const CONTRACT_PAYMENT_METHOD_OPTIONS = ["입금 전", "입금확인", "적립금사용", "환불요청", "기타"] as const;
-const CONTRACT_DEPOSIT_BANK_OPTIONS = ["국민은행", "하나은행", "농협은행", "카드결제", "크몽", "기타"] as const;
+const CONTRACT_PAYMENT_METHOD_OPTIONS = ["입금 전", "입금확인", "환불요청", "기타"] as const;
+const CONTRACT_DEPOSIT_BANK_OPTIONS = ["국민은행", "카드결제", "크몽", "기타"] as const;
 
 function AutocompleteInput({ 
   value, 
@@ -1007,22 +1006,6 @@ export default function ContractsPage() {
     return "미포함";
   };
 
-  const normalizeDisbursementStatus = (value: unknown) => {
-    const raw = normalizeText(String(value ?? ""));
-    const normalized = raw.replace(/\s+/g, "");
-    const asciiKey = normalized.replace(/[_-]/g, "").toLowerCase();
-    if (!normalized) return "";
-    if (["지급예정", "지급대기", "지급요청", "지급완료", "일반지급", "지급보류"].includes(raw)) return raw;
-    if (["scheduled", "expected", "planned"].includes(asciiKey)) return "지급예정";
-    if (["pending", "wait", "waiting", "queued", "queue", "ready"].includes(asciiKey)) return "지급대기";
-    if (["request", "requested"].includes(asciiKey)) return "지급요청";
-    if (["complete", "completed", "done", "paid"].includes(asciiKey)) return "지급완료";
-    if (["normal", "standard", "general"].includes(asciiKey)) return "일반지급";
-    if (["hold", "onhold", "withheld", "pause", "paused"].includes(asciiKey)) return "지급보류";
-    if (/^[a-z0-9 _-]+$/i.test(raw)) return "";
-    return raw;
-  };
-
   const normalizePaymentMethodForForm = (value: unknown) => {
     const raw = normalizeText(String(value ?? ""));
     const normalized = raw.replace(/\s+/g, "");
@@ -1035,17 +1018,15 @@ export default function ContractsPage() {
       return "입금 전";
     }
     if (
-      ["입금확인", "입금완료", "하나", "국민", "농협", "하나은행", "국민은행", "농협은행", "크몽"].includes(raw) ||
-      ["deposit", "deposited", "banktransfer", "transfer", "confirmed", "hana", "hanabank", "kb", "kookmin", "kbstar", "nonghyup", "nh", "kmong"].includes(asciiKey)
+      ["입금확인", "입금완료", "국민", "국민은행", "카드결제", "크몽"].includes(raw) ||
+      ["deposit", "deposited", "banktransfer", "transfer", "confirmed", "kb", "kookmin", "kbstar", "card", "cardpayment", "kmong"].includes(asciiKey)
     ) {
       return "입금확인";
     }
     if (["환불", "환불요청", "환불처리", "환불등록"].includes(raw) || ["refund", "refunded", "refundrequest", "refundrequested"].includes(asciiKey)) {
       return "환불요청";
     }
-    if (["적립금사용", "적립금 사용", "적립금", "적립"].includes(raw) || ["usekeep", "usecredit", "credituse", "keepuse", "keep", "credit"].includes(asciiKey)) {
-      return "적립금사용";
-    }
+    if (["적립금사용", "적립금 사용", "적립금", "적립"].includes(raw) || ["usekeep", "usecredit", "credituse", "keepuse", "keep", "credit"].includes(asciiKey)) return "기타";
     if (["체크", "기타"].includes(raw) || ["check", "other", "etc"].includes(asciiKey)) {
       return "기타";
     }
@@ -1058,22 +1039,10 @@ export default function ContractsPage() {
     const normalized = raw.replace(/\s+/g, "");
     const asciiKey = normalized.replace(/[_-]/g, "").toLowerCase();
     if (
-      ["하나", "하나은행"].includes(raw) ||
-      ["hana", "hanabank"].includes(asciiKey)
-    ) {
-      return "하나은행";
-    }
-    if (
       ["국민", "국민은행"].includes(raw) ||
       ["kb", "kookmin", "kbstar"].includes(asciiKey)
     ) {
       return "국민은행";
-    }
-    if (
-      ["농협", "농협은행"].includes(raw) ||
-      ["nonghyup", "nh"].includes(asciiKey)
-    ) {
-      return "농협은행";
     }
     if (
       ["카드 결제", "카드결제"].includes(raw) ||
@@ -1087,7 +1056,7 @@ export default function ContractsPage() {
     ) {
       return "크몽";
     }
-    if (raw === "기타" || asciiKey === "other") {
+    if (raw === "기타" || asciiKey === "other" || ["하나", "하나은행", "농협", "농협은행"].includes(raw) || ["hana", "hanabank", "nonghyup", "nh"].includes(asciiKey)) {
       return "기타";
     }
     return DEFAULT_CREATE_DEPOSIT_BANK;
@@ -1162,7 +1131,7 @@ export default function ContractsPage() {
             item.fixedWorkCostAmount === null || item.fixedWorkCostAmount === undefined
               ? null
               : toNonNegativeAmount(item.fixedWorkCostAmount),
-          disbursementStatus: normalizeDisbursementStatus(item.disbursementStatus),
+        disbursementStatus: "",
           supplyAmount,
           grossSupplyAmount: hasStoredGrossSupplyAmount && Number.isFinite(storedGrossSupplyAmount)
             ? storedGrossSupplyAmount
@@ -1230,7 +1199,7 @@ export default function ContractsPage() {
                     : isRefundDetail
                       ? Number(item.fixedWorkCostAmount) || 0
                       : Math.max(0, Number(item.fixedWorkCostAmount) || 0),
-                disbursementStatus: normalizeDisbursementStatus(item.disbursementStatus ?? contract.disbursementStatus ?? ""),
+                disbursementStatus: "",
                 supplyAmount:
                   item.supplyAmount === null || item.supplyAmount === undefined
                     ? null
@@ -1309,7 +1278,7 @@ export default function ContractsPage() {
         worker: String(workerNames[idx] || (snapshot?.worker ?? product?.worker ?? "")).trim(),
         workCost: Number(snapshot?.workCost ?? product?.workCost) || 0,
         fixedWorkCostAmount: null,
-          disbursementStatus: normalizeDisbursementStatus(contract.disbursementStatus),
+          disbursementStatus: "",
         supplyAmount: null,
         grossSupplyAmount: null,
         refundAmount: null,
@@ -1555,7 +1524,7 @@ export default function ContractsPage() {
       invoiceIssued: deriveInvoiceIssuedText(displayItems, contractToOpen.invoiceIssued),
       worker: contractToOpen.worker || "",
       notes: contractToOpen.notes || "",
-      disbursementStatus: normalizeDisbursementStatus(contractToOpen.disbursementStatus),
+      disbursementStatus: "",
       userIdentifier: contractToOpen.userIdentifier || "",
     });
 
@@ -1602,7 +1571,7 @@ export default function ContractsPage() {
       invoiceIssued: deriveInvoiceIssuedText(displayItems, sourceContract.invoiceIssued),
       worker: sourceContract.worker || "",
       notes: sourceContract.notes || "",
-      disbursementStatus: normalizeDisbursementStatus(sourceContract.disbursementStatus),
+      disbursementStatus: "",
       userIdentifier: sourceContract.userIdentifier || "",
     });
     setProductItemNumericDrafts({});
@@ -2000,8 +1969,8 @@ export default function ContractsPage() {
       return "입금 전";
     }
     if (
-      ["입금확인", "입금완료", "하나", "국민", "농협", "하나은행", "국민은행", "농협은행", "크몽"].includes(raw) ||
-      ["deposit", "deposited", "banktransfer", "transfer", "confirmed", "hana", "hanabank", "kb", "kookmin", "kbstar", "nonghyup", "nh", "kmong"].includes(asciiKey)
+      ["입금확인", "입금완료", "국민", "국민은행", "카드결제", "크몽"].includes(raw) ||
+      ["deposit", "deposited", "banktransfer", "transfer", "confirmed", "kb", "kookmin", "kbstar", "card", "cardpayment", "kmong"].includes(asciiKey)
     ) {
       return "입금확인";
     }
@@ -2012,9 +1981,7 @@ export default function ContractsPage() {
       ["적립금사용", "적립금 사용", "적립금", "적립", "적립금등록"].includes(raw) ||
       ["usekeep", "usecredit", "credituse", "keepuse", "keep", "credit", "reserve", "savedcredit"].includes(asciiKey) ||
       /^\?+$/.test(normalized)
-    ) {
-      return "적립금사용";
-    }
+    ) return "기타";
     if (["체크", "기타"].includes(raw) || ["check", "other", "etc"].includes(asciiKey)) {
       return "기타";
     }
@@ -2155,29 +2122,6 @@ export default function ContractsPage() {
     return 0;
   };
 
-  const getItemKeepAmount = (contract: Contract, item: ProductItem) => {
-    const storedKeepAmount = Math.abs(Number(item.negativeAdjustmentAmount) || 0);
-    if (Number.isFinite(storedKeepAmount) && storedKeepAmount > 0) {
-      return getFinancialAmountWithVat(contract, {
-        amount: storedKeepAmount,
-        targetAmount: calculateSupplyAmount(item),
-        itemId: item.id,
-        userIdentifier: item.userIdentifier,
-        productName: item.productName,
-      });
-    }
-    return 0;
-  };
-
-  const getItemKeepFallbackGrossAmount = (contract: Contract, item: ProductItem) => {
-    return getFinancialTargetGrossAmount(contract, {
-      targetAmount: calculateSupplyAmount(item),
-      itemId: item.id,
-      userIdentifier: item.userIdentifier,
-      productName: item.productName,
-    });
-  };
-
   const getPaymentMethodDisplayAmount = (contract: Contract, item: ProductItem) => {
     const itemKey = getFinancialItemKey(contract.id, item.id);
     const fallbackKey = getFinancialFallbackKey(contract.id, item.userIdentifier, item.productName);
@@ -2248,8 +2192,8 @@ export default function ContractsPage() {
 
   const shouldScrollProductItems = productItems.length > 5;
   const productRowsViewportClassName = shouldScrollProductItems ? "max-h-[292px] overflow-y-auto" : "";
-  const contractDialogClassName = "top-[70px] max-h-[calc(100vh-140px)] translate-y-0 gap-3 overflow-hidden rounded-none p-4 sm:rounded-none";
-  const contractDialogBodyClassName = "flex min-h-0 flex-col gap-3 overflow-y-auto pr-1";
+  const contractDialogClassName = "top-[56px] flex w-[95vw] max-w-[1700px] max-h-[calc(100dvh-80px)] translate-y-0 flex-col gap-3 overflow-hidden rounded-none p-3 sm:top-[70px] sm:max-h-[calc(100dvh-140px)] sm:p-4";
+  const contractDialogBodyClassName = "flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1";
 
   const getItemMarginRate = (item: ProductItem) => {
     return calculateMarginRateFromMarginAmount(item);
@@ -2312,7 +2256,6 @@ export default function ContractsPage() {
   const getPaymentMethodTextClassName = (paymentMethod: string | null | undefined) => {
     const normalized = canonicalPaymentMethod(paymentMethod);
     if (normalized === "환불요청") return "text-red-600 font-medium";
-    if (normalized === "적립금사용") return "text-green-600 font-medium";
     if (normalized === "입금확인") return "text-blue-600 font-medium";
     if (normalized === "입금 전") return "text-amber-600 font-medium";
     return "text-foreground";
@@ -2438,7 +2381,7 @@ export default function ContractsPage() {
             <DialogContent
               key={`create-contract-dialog-${createDialogMode}-${createDialogRenderKey}`}
               className={contractDialogClassName}
-              style={{ width: "calc(100vw - 88px)", maxWidth: "1700px" }}
+              style={{ width: "95vw", maxWidth: "1700px" }}
             >
               <DialogHeader className="space-y-1 border-b pb-3">
                 <DialogTitle>{createDialogMode === "copy" ? "계약 복사 등록" : "계약 등록"}</DialogTitle>
@@ -2674,7 +2617,7 @@ export default function ContractsPage() {
 
                 <div className="w-full">
                   <div className="flex max-w-[820px] flex-col items-start gap-2">
-                    <div className="grid w-full gap-2 md:grid-cols-[180px_180px_180px]">
+                    <div className="grid w-full gap-2 sm:grid-cols-2 md:grid-cols-[180px_180px]">
                       <div className="space-y-1">
                         <Label className="text-xs">결제확인</Label>
                         <Select
@@ -2711,34 +2654,15 @@ export default function ContractsPage() {
                           </SelectContent>
                         </Select>
                       </div>
-                      <div className="space-y-1">
-                        <Label className="text-xs">지급현황</Label>
-                        <Select
-                          value={formData.disbursementStatus || ""}
-                          onValueChange={(value) => setFormData({ ...formData, disbursementStatus: value })}
-                        >
-                          <SelectTrigger className="h-8 rounded-none text-sm" data-testid="select-disbursement-status">
-                            <SelectValue placeholder="선택" />
-                          </SelectTrigger>
-                          <SelectContent className="rounded-none">
-                            <SelectItem value="지급예정">지급예정</SelectItem>
-                            <SelectItem value="지급대기">지급대기</SelectItem>
-                            <SelectItem value="지급요청">지급요청</SelectItem>
-                            <SelectItem value="지급완료">지급완료</SelectItem>
-                            <SelectItem value="일반지급">일반지급</SelectItem>
-                            <SelectItem value="지급보류">지급보류</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
                     </div>
 
                     <div className="w-full max-w-[640px] space-y-1">
                       <Label className="text-xs">비고</Label>
                       <Textarea
-                        rows={6}
+                        rows={3}
                         value={formData.notes || ""}
                         onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                        className="min-h-[156px] rounded-none text-sm resize-none"
+                        className="h-20 min-h-20 rounded-none text-sm resize-none"
                         placeholder="비고 입력"
                         data-testid="input-notes"
                       />
@@ -2746,7 +2670,7 @@ export default function ContractsPage() {
                   </div>
                 </div>
 
-                <div className="flex w-full justify-end gap-2 border-t pt-3">
+                <div className="sticky bottom-0 z-10 flex w-full shrink-0 justify-end gap-2 border-t bg-background pt-3">
                   <Button
                     variant="outline"
                     onClick={closeCreateDialog}
@@ -2772,7 +2696,7 @@ export default function ContractsPage() {
           <Dialog open={isEditOpen} onOpenChange={(open) => { setIsEditOpen(open); if (!open) { setEditingContractId(null); setEditDialogMode("edit"); resetForm(); } }}>
             <DialogContent
               className={contractDialogClassName}
-              style={{ width: "calc(100vw - 88px)", maxWidth: "1700px" }}
+              style={{ width: "95vw", maxWidth: "1700px" }}
             >
               <DialogHeader className="space-y-1 border-b pb-3">
                 <DialogTitle>{isEditReadOnly ? "계약 상세" : "계약 수정"}</DialogTitle>
@@ -3025,7 +2949,7 @@ export default function ContractsPage() {
 
                 <div className="w-full">
                   <div className="flex max-w-[820px] flex-col items-start gap-2">
-                    <div className="grid w-full gap-2 md:grid-cols-[180px_180px_180px]">
+                    <div className="grid w-full gap-2 sm:grid-cols-2 md:grid-cols-[180px_180px]">
                       <div className="space-y-1">
                         <Label className="text-xs">결제확인</Label>
                         <Select
@@ -3069,35 +2993,15 @@ export default function ContractsPage() {
                           </SelectContent>
                         </Select>
                       </div>
-                      <div className="space-y-1">
-                        <Label className="text-xs">지급현황</Label>
-                        <Select
-                          value={formData.disbursementStatus || ""}
-                          onValueChange={(value) => setFormData({ ...formData, disbursementStatus: value })}
-                          disabled={isEditReadOnly}
-                        >
-                          <SelectTrigger className="h-8 rounded-none text-sm" data-testid="edit-select-disbursement-status">
-                            <SelectValue placeholder="선택" />
-                          </SelectTrigger>
-                          <SelectContent className="rounded-none">
-                            <SelectItem value="지급예정">지급예정</SelectItem>
-                            <SelectItem value="지급대기">지급대기</SelectItem>
-                            <SelectItem value="지급요청">지급요청</SelectItem>
-                            <SelectItem value="지급완료">지급완료</SelectItem>
-                            <SelectItem value="일반지급">일반지급</SelectItem>
-                            <SelectItem value="지급보류">지급보류</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
                     </div>
 
                     <div className="w-full max-w-[640px] space-y-1">
                       <Label className="text-xs">비고</Label>
                       <Textarea
-                        rows={6}
+                        rows={3}
                         value={formData.notes || ""}
                         onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                        className="min-h-[156px] rounded-none text-sm resize-none"
+                        className="h-20 min-h-20 rounded-none text-sm resize-none"
                         placeholder="비고 입력"
                         data-testid="edit-input-notes"
                         disabled={isEditReadOnly}
@@ -3106,7 +3010,7 @@ export default function ContractsPage() {
                   </div>
                 </div>
 
-                <div className="flex w-full justify-end gap-2 border-t pt-3">
+                <div className="sticky bottom-0 z-10 flex w-full shrink-0 justify-end gap-2 border-t bg-background pt-3">
                   <Button
                     variant="outline"
                     onClick={() => { setIsEditOpen(false); setEditingContractId(null); setEditDialogMode("edit"); resetForm(); }}
