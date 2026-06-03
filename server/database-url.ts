@@ -26,14 +26,20 @@ function appendSslMode(connectionUrl: string): string {
 }
 
 export function resolveDatabaseUrl(): string {
-  const explicitUrl = readEnv(DB_URL_ENV_NAME);
-  if (explicitUrl) return explicitUrl;
+  const explicitUrl = firstEnv([
+    DB_URL_ENV_NAME,
+    "POSTGRES_URL",
+    "POSTGRESQL_URL",
+    "PGDATABASE_URL",
+    "DATABASE_PRIVATE_URL",
+  ]);
+  if (explicitUrl) return appendSslMode(explicitUrl);
 
-  const host = firstEnv(["DB_HOST", "PGHOST"]);
-  const database = firstEnv(["DB_NAME", "DB_DATABASE", "POSTGRES_DB", "PGDATABASE"]);
-  const user = firstEnv(["DB_USER", "DB_USERNAME", "POSTGRES_USER", "PGUSER"]);
+  const host = firstEnv(["DB_HOST", "PGHOST", "POSTGRES_HOST", "POSTGRESQL_HOST"]);
+  const database = firstEnv(["DB_NAME", "DB_DATABASE", "POSTGRES_DB", "POSTGRES_DATABASE", "PGDATABASE"]);
+  const user = firstEnv(["DB_USER", "DB_USERNAME", "POSTGRES_USER", "POSTGRES_USERNAME", "PGUSER"]);
   const password = firstEnv(["DB_PASSWORD", "POSTGRES_PASSWORD", "PGPASSWORD"]);
-  const port = firstEnv(["DB_PORT", "PGPORT"]) || "5432";
+  const port = firstEnv(["DB_PORT", "PGPORT", "POSTGRES_PORT", "POSTGRESQL_PORT"]) || "5432";
 
   if (!host || !database || !user) {
     return "";
@@ -48,7 +54,7 @@ export function ensureDatabaseUrl(): string {
   const databaseUrl = resolveDatabaseUrl();
   if (!databaseUrl) {
     throw new Error(
-      "DATABASE_URL is not set and DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD are incomplete.",
+      "Database connection is not configured. Set DATABASE_URL or DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD.",
     );
   }
 
