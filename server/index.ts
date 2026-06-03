@@ -452,9 +452,8 @@ async function bootstrapApplication() {
   log("application bootstrap completed");
 }
 
-// ALWAYS serve the app on the port specified in the environment variable PORT.
-// Other ports are firewalled. Default to 5000 if not specified.
-const port = parseInt(process.env.PORT || "5000", 10);
+// AI SPACE health checks port 3000 unless PORT is explicitly injected.
+const port = parseInt(process.env.PORT || "3000", 10);
 httpServer.listen(
   {
     port,
