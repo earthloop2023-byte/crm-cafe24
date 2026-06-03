@@ -21,8 +21,10 @@ function resolveDatabaseUrl(): string {
     "DATABASE_URL",
     "POSTGRES_URL",
     "POSTGRESQL_URL",
+    "POSTGRES_PRISMA_URL",
     "PGDATABASE_URL",
     "DATABASE_PRIVATE_URL",
+    "DB_URL",
   ]);
   if (explicitUrl) return explicitUrl;
 
@@ -38,14 +40,17 @@ function resolveDatabaseUrl(): string {
   return `postgres://${auth}@${host}:${encodeURIComponent(port)}/${encodeURIComponent(database)}`;
 }
 
-const databaseUrl = resolveDatabaseUrl();
+export const databaseUrl = resolveDatabaseUrl();
+export const hasDatabaseConfig = Boolean(databaseUrl);
 
-if (!databaseUrl) {
-  throw new Error("Database connection is not configured. Set DATABASE_URL or DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD.");
+if (!hasDatabaseConfig) {
+  console.warn("[db] database connection is not configured. DB-backed features are disabled until env vars are provided.");
 }
 
 export const pool = new Pool({
-  connectionString: databaseUrl,
+  connectionString: databaseUrl || "postgres://invalid:invalid@127.0.0.1:1/invalid",
+  connectionTimeoutMillis: databaseUrl ? undefined : 1000,
+  max: databaseUrl ? undefined : 1,
 });
 
 export const db = drizzle(pool, { schema });
@@ -58,6 +63,11 @@ async function tableExists(tableName: string): Promise<boolean> {
 }
 
 export async function ensureDatabasePerformanceObjects() {
+  if (!hasDatabaseConfig) {
+    console.log("[db] performance indexes skipped because database is not configured.");
+    return;
+  }
+
   try {
     await pool.query(`CREATE EXTENSION IF NOT EXISTS pg_trgm`);
   } catch (error) {

@@ -8,7 +8,7 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { seedDatabase } from "./seed";
-import { ensureDatabasePerformanceObjects, pool } from "./db";
+import { ensureDatabasePerformanceObjects, hasDatabaseConfig, pool } from "./db";
 import { storage } from "./storage";
 import { assertPiiEncryptionReadyForProduction } from "./pii-security";
 
@@ -59,6 +59,16 @@ app.get("/", (_req, res, next) => {
 });
 
 app.get("/api/readyz", async (_req, res) => {
+  if (!hasDatabaseConfig) {
+    res.status(503).json({
+      ok: false,
+      db: "disabled",
+      message: "database connection is not configured",
+      timestamp: new Date().toISOString(),
+    });
+    return;
+  }
+
   try {
     await pool.query("SELECT 1");
     res.json({
@@ -204,12 +214,14 @@ const sessionPruneInterval = Math.max(
 app.use(
   session({
     name: sessionCookieName,
-    store: new PgSession({
-      pool,
-      tableName: "session",
-      createTableIfMissing: true,
-      pruneSessionInterval: sessionPruneInterval,
-    }),
+    store: hasDatabaseConfig
+      ? new PgSession({
+          pool,
+          tableName: "session",
+          createTableIfMissing: true,
+          pruneSessionInterval: sessionPruneInterval,
+        })
+      : undefined,
     secret: configuredSessionSecret || "crm-dev-session-secret",
     resave: false,
     saveUninitialized: false,
