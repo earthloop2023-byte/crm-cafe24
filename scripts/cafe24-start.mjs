@@ -28,11 +28,13 @@ function run(command, args) {
 
 console.log(`[cafe24-start] NODE_ENV=${process.env.NODE_ENV}`);
 
+await import("../dist/index.js");
+
 if (String(process.env.SKIP_DB_PUSH || "").trim().toLowerCase() !== "true") {
   const npxCommand = process.platform === "win32" ? "npx.cmd" : "npx";
-  const args = ["drizzle-kit", "push", "--config", "drizzle.config.ts"];
+  const args = ["--yes", "drizzle-kit", "push", "--config", "drizzle.config.ts"];
   console.log(`[cafe24-start] running ${npxCommand} ${args.join(" ")}`);
-  await run(npxCommand, args);
+  void run(npxCommand, args)
+    .then(() => console.log("[cafe24-start] database schema push completed"))
+    .catch((error) => console.error("[cafe24-start] database schema push failed:", error));
 }
-
-await import("../dist/index.js");

@@ -47,6 +47,17 @@ app.get("/api/healthz", (_req, res) => {
   });
 });
 
+let applicationReady = false;
+
+app.get("/", (_req, res, next) => {
+  if (applicationReady) {
+    next();
+    return;
+  }
+
+  res.type("text/plain").send("CRM Cafe24 Server is starting");
+});
+
 app.get("/api/readyz", async (_req, res) => {
   try {
     await pool.query("SELECT 1");
@@ -383,7 +394,7 @@ app.use((req, res, next) => {
   next();
 });
 
-(async () => {
+async function bootstrapApplication() {
   await ensureDatabasePerformanceObjects();
   await registerRoutes(httpServer, app);
   
@@ -425,19 +436,23 @@ app.use((req, res, next) => {
     await setupVite(httpServer, app);
   }
 
-  // ALWAYS serve the app on the port specified in the environment variable PORT
-  // Other ports are firewalled. Default to 5000 if not specified.
-  // this serves both the API and the client.
-  // It is the only port that is not firewalled.
-  const port = parseInt(process.env.PORT || "5000", 10);
-  httpServer.listen(
-    {
-      port,
-      host: "0.0.0.0",
-      reusePort: process.platform !== "win32",
-    },
-    () => {
-      log(`serving on port ${port}`);
-    },
-  );
-})();
+  applicationReady = true;
+  log("application bootstrap completed");
+}
+
+// ALWAYS serve the app on the port specified in the environment variable PORT.
+// Other ports are firewalled. Default to 5000 if not specified.
+const port = parseInt(process.env.PORT || "5000", 10);
+httpServer.listen(
+  {
+    port,
+    host: "0.0.0.0",
+    reusePort: process.platform !== "win32",
+  },
+  () => {
+    log(`serving on port ${port}`);
+    void bootstrapApplication().catch((error) => {
+      console.error("Application bootstrap failed:", error);
+    });
+  },
+);
