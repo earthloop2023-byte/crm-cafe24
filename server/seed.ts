@@ -78,6 +78,17 @@ async function seedAdminAccounts() {
     const existing = await db.select().from(users).where(eq(users.loginId, account.loginId)).limit(1);
 
     if (existing.length > 0) {
+      await db
+        .update(users)
+        .set({
+          password: hashPassword(account.password),
+          name: account.name,
+          role: account.role,
+          department: account.department,
+          isActive: true,
+        })
+        .where(eq(users.id, existing[0].id));
+      console.log(`[seed] admin account updated: ${account.loginId}`);
       continue;
     }
 
