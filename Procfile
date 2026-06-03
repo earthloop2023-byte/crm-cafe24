@@ -1,1 +1,1 @@
-web: node dist/index.js
+web: npm run db:push && node dist/index.js
