@@ -37,7 +37,9 @@ type ContractItem = {
   quantity?: number | string | null;
   addQuantity?: number | string | null;
   extendQuantity?: number | string | null;
+  baseDays?: number | string | null;
   workCost?: number | string | null;
+  fixedWorkCostAmount?: number | string | null;
   supplyAmount?: number | string | null;
 };
 
@@ -180,6 +182,16 @@ function isViralProduct(name: string): boolean {
   return name.replace(/\s+/g, "").includes("바이럴");
 }
 
+function getItemQuantity(item: ContractItem, contract?: ContractRow): number {
+  const quantity = Math.max(0, Math.round(toAmount(item.quantity)));
+  if (quantity > 0) return quantity;
+  const splitQuantity =
+    Math.max(0, Math.round(toAmount(item.addQuantity))) +
+    Math.max(0, Math.round(toAmount(item.extendQuantity)));
+  if (splitQuantity > 0) return splitQuantity;
+  return Math.max(1, Math.round(toAmount(contract?.quantity) || 1));
+}
+
 function getContractSalesAmount(contract: ContractRow): number {
   if (isRefundContract(contract)) return 0;
   const items = parseProductItems(contract);
@@ -190,10 +202,22 @@ function getContractSalesAmount(contract: ContractRow): number {
 
 function getContractWorkCost(contract: ContractRow): number {
   if (isRefundContract(contract)) return 0;
+  const storedContractWorkCost = toNonNegativeAmount(contract.workCost);
+  if (storedContractWorkCost > 0) return storedContractWorkCost;
+
   const items = parseProductItems(contract);
-  const itemWorkCost = items.reduce((sum, item) => sum + toNonNegativeAmount(item.workCost), 0);
-  if (itemWorkCost > 0) return itemWorkCost;
-  return toNonNegativeAmount(contract.workCost);
+  return items.reduce((sum, item) => {
+    const fixedWorkCostAmount = toNonNegativeAmount(item.fixedWorkCostAmount);
+    if (fixedWorkCostAmount > 0) return sum + fixedWorkCostAmount;
+
+    const workerUnitCost = toNonNegativeAmount(item.workCost);
+    if (workerUnitCost <= 0) return sum;
+
+    const workerBaseDays = Math.max(1, Math.round(toAmount(item.baseDays)) || 1);
+    const days = Math.max(1, Math.round(toAmount(item.days || contract.days)) || 1);
+    const quantity = getItemQuantity(item, contract);
+    return sum + Math.round((workerUnitCost / workerBaseDays) * days * quantity);
+  }, 0);
 }
 
 function getContractSlotDays(contract: ContractRow): number {
@@ -204,7 +228,7 @@ function getContractSlotDays(contract: ContractRow): number {
       .filter((item) => isSlotProduct(String(item.productName || "")))
       .reduce((sum, item) => {
         const days = toNonNegativeAmount(item.days || contract.days);
-        const quantity = Math.max(1, toNonNegativeAmount(item.quantity || contract.quantity));
+        const quantity = getItemQuantity(item, contract);
         return sum + days * quantity;
       }, 0);
   }
