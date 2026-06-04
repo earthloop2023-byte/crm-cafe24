@@ -84,6 +84,12 @@ type RefundRow = {
   createdAt?: string | Date | null;
 };
 
+type ProductRow = {
+  id: string;
+  name?: string | null;
+  category?: string | null;
+};
+
 type MetricCard = {
   label: string;
   value: string;
@@ -182,6 +188,34 @@ function isViralProduct(name: string): boolean {
   return name.replace(/\s+/g, "").includes("바이럴");
 }
 
+function normalizeProductKey(value: unknown): string {
+  return String(value || "").replace(/\s+/g, "").trim();
+}
+
+function getBaseProductKey(value: unknown): string {
+  return normalizeProductKey(String(value || "").replace(/\s*\([^)]*\)\s*$/, ""));
+}
+
+function buildProductMap(products: ProductRow[]): Map<string, ProductRow> {
+  const map = new Map<string, ProductRow>();
+  for (const product of products) {
+    const nameKey = normalizeProductKey(product.name);
+    const baseKey = getBaseProductKey(product.name);
+    if (nameKey) map.set(nameKey, product);
+    if (baseKey) map.set(baseKey, product);
+  }
+  return map;
+}
+
+function resolveProduct(productName: unknown, productByName: Map<string, ProductRow>): ProductRow | undefined {
+  return productByName.get(normalizeProductKey(productName)) || productByName.get(getBaseProductKey(productName));
+}
+
+function isSlotProductByCategory(productName: unknown, productByName: Map<string, ProductRow>): boolean {
+  const product = resolveProduct(productName, productByName);
+  return normalizeProductKey(product?.category).includes("슬롯");
+}
+
 function getItemQuantity(item: ContractItem, contract?: ContractRow): number {
   const quantity = Math.max(0, Math.round(toAmount(item.quantity)));
   if (quantity > 0) return quantity;
@@ -220,19 +254,22 @@ function getContractWorkCost(contract: ContractRow): number {
   }, 0);
 }
 
-function getContractSlotDays(contract: ContractRow): number {
+function getContractSlotDays(contract: ContractRow, productByName: Map<string, ProductRow>): number {
   if (isRefundContract(contract)) return 0;
   const items = parseProductItems(contract);
   if (items.length > 0) {
     return items
-      .filter((item) => isSlotProduct(String(item.productName || "")))
+      .filter((item) => isSlotProductByCategory(item.productName, productByName))
       .reduce((sum, item) => {
         const days = toNonNegativeAmount(item.days || contract.days);
         const quantity = getItemQuantity(item, contract);
         return sum + days * quantity;
       }, 0);
   }
-  if (!getContractProductNames(contract).some(isSlotProduct)) return 0;
+  const productNames = getContractProductNames(contract).filter((name) =>
+    isSlotProductByCategory(name, productByName),
+  );
+  if (productNames.length === 0) return 0;
   return toNonNegativeAmount(contract.days) * Math.max(1, toNonNegativeAmount(contract.quantity));
 }
 
@@ -273,6 +310,12 @@ export default function SalesAnalyticsPage() {
     queryKey: ["/api/refunds"],
     queryFn: () => fetchJson<RefundRow[]>("/api/refunds"),
   });
+  const { data: products = [], refetch: refetchProducts } = useQuery<ProductRow[]>({
+    queryKey: ["/api/products"],
+    queryFn: () => fetchJson<ProductRow[]>("/api/products"),
+  });
+
+  const productByName = useMemo(() => buildProductMap(products), [products]);
 
   const filteredContracts = useMemo(() => {
     const keyword = searchTerm.trim().toLowerCase();
@@ -281,9 +324,9 @@ export default function SalesAnalyticsPage() {
       const names = getContractProductNames(contract);
       const matchesDepartment =
         department === "all" ||
-        (department === "slot" && names.some(isSlotProduct)) ||
+        (department === "slot" && names.some((name) => isSlotProductByCategory(name, productByName))) ||
         (department === "viral" && names.some(isViralProduct)) ||
-        (department === "other" && !names.some((name) => isSlotProduct(name) || isViralProduct(name)));
+        (department === "other" && !names.some((name) => isSlotProductByCategory(name, productByName) || isViralProduct(name)));
       if (!matchesDepartment) return false;
       if (!keyword) return true;
       return [
@@ -295,7 +338,7 @@ export default function SalesAnalyticsPage() {
         ...names,
       ].some((value) => String(value || "").toLowerCase().includes(keyword));
     });
-  }, [contracts, department, endDate, searchTerm, startDate]);
+  }, [contracts, department, endDate, productByName, searchTerm, startDate]);
 
   const filteredRefunds = useMemo(() => {
     return refunds.filter((refund) => isWithinDateRange(refund.refundDate || refund.createdAt, startDate, endDate));
@@ -313,14 +356,14 @@ export default function SalesAnalyticsPage() {
   const totalRefunds = Math.max(totalRefundsFromContracts, totalRefundsFromRefundRows);
   const totalWorkCost = filteredContracts.reduce((sum, contract) => sum + getContractWorkCost(contract), 0);
   const netProfit = totalSales - totalRefunds - totalWorkCost;
-  const slotOrderDays = filteredContracts.reduce((sum, contract) => sum + getContractSlotDays(contract), 0);
+  const slotOrderDays = filteredContracts.reduce((sum, contract) => sum + getContractSlotDays(contract, productByName), 0);
   const viralSalesCount = filteredContracts.filter((contract) =>
     !isRefundContract(contract) && getContractProductNames(contract).some(isViralProduct)
   ).length;
   const otherContractCount = filteredContracts.filter((contract) => {
     if (isRefundContract(contract)) return false;
     const names = getContractProductNames(contract);
-    return names.length === 0 || !names.some((name) => isSlotProduct(name) || isViralProduct(name));
+    return names.length === 0 || !names.some((name) => isSlotProductByCategory(name, productByName) || isViralProduct(name));
   }).length;
   const refundCount = Math.max(
     filteredContracts.filter(isRefundContract).length,
@@ -415,6 +458,7 @@ export default function SalesAnalyticsPage() {
     refetchContracts();
     refetchDeals();
     refetchRefunds();
+    refetchProducts();
   };
 
   const resetFilters = () => {
