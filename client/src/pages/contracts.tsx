@@ -2294,23 +2294,23 @@ export default function ContractsPage() {
   }, [products]);
 
   return (
-    <div className="p-6 space-y-4">
+    <div className="space-y-4 p-4 sm:p-6">
       <div
         ref={stickyToolbarRef}
-        className="sticky top-0 z-30 -mx-6 -mt-6 space-y-4 border-b border-border/80 bg-background/95 px-6 pb-4 pt-6 backdrop-blur supports-[backdrop-filter]:bg-background/75"
+        className="sticky top-0 z-30 -mx-4 -mt-4 space-y-3 border-b border-border/80 bg-background/95 px-4 pb-4 pt-4 backdrop-blur supports-[backdrop-filter]:bg-background/75 sm:-mx-6 sm:-mt-6 sm:space-y-4 sm:px-6 sm:pt-6"
         data-testid="contracts-sticky-toolbar"
       >
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <FileText className="w-6 h-6 text-primary" />
-          <h1 className="text-xl font-bold" data-testid="text-page-title">계약관리목록</h1>
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+          <FileText className="h-5 w-5 shrink-0 text-primary sm:h-6 sm:w-6" />
+          <h1 className="truncate text-lg font-bold leading-tight sm:text-xl" data-testid="text-page-title">계약관리목록</h1>
         </div>
-        <div className="flex items-center gap-3">
-          <span className="text-sm text-muted-foreground">
+        <div className="grid w-full grid-cols-[1fr_auto_auto_auto] items-center gap-2 lg:flex lg:w-auto lg:gap-3">
+          <span className="col-span-4 text-sm text-muted-foreground lg:col-auto">
             검색 결과 {totalFilteredContracts} 건
           </span>
-          <div className="relative">
+          <div className="relative col-span-3 min-w-0 sm:col-span-2 lg:col-auto">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
               placeholder="계약번호, 고객명, 상품명, 아이디 검색"
@@ -2319,13 +2319,13 @@ export default function ContractsPage() {
                 setSearchQuery(e.target.value);
                 setCurrentPage(1);
               }}
-              className="pl-9 w-64 rounded-none"
+              className="h-10 w-full rounded-none pl-9 text-sm lg:w-64"
               data-testid="input-search"
             />
           </div>
           <Button
             variant="outline"
-            className="rounded-none"
+            className="hidden h-10 rounded-none px-3 sm:inline-flex"
             onClick={() => {
               if (selectedContractIds.length === 0) {
                 toast({ title: "삭제할 항목을 선택해주세요.", variant: "destructive" });
@@ -2340,8 +2340,8 @@ export default function ContractsPage() {
             disabled={selectedContractIds.length === 0}
             data-testid="button-delete"
           >
-            <Trash2 className="w-4 h-4 mr-1" />
-            삭제
+            <Trash2 className="h-4 w-4 lg:mr-1" />
+            <span className="hidden lg:inline">삭제</span>
           </Button>
           <Button
             variant="outline"
@@ -2355,7 +2355,7 @@ export default function ContractsPage() {
           </Button>
           <Button
             variant="outline"
-            className="rounded-none"
+            className="hidden h-10 rounded-none px-3 sm:inline-flex"
             onClick={handleRefundOpen}
             disabled={!singleSelectedRow || isRefundContract(singleSelectedRow.contract)}
             data-testid="button-refund"
@@ -2365,7 +2365,7 @@ export default function ContractsPage() {
           </Button>
           <Button
             variant="outline"
-            className="rounded-none"
+            className="hidden h-10 rounded-none px-3 xl:inline-flex"
             onClick={handleBulkMarkDepositConfirmed}
             disabled={selectedContractIds.length === 0 || bulkMarkDepositConfirmedMutation.isPending}
             data-testid="button-bulk-mark-deposit-confirmed"
@@ -2373,7 +2373,7 @@ export default function ContractsPage() {
             {bulkMarkDepositConfirmedMutation.isPending ? "변경 중..." : "입금확인 변경"}
           </Button>
           <Button
-            className="rounded-none bg-primary hover:bg-primary/90"
+            className="h-10 rounded-none bg-primary px-4 hover:bg-primary/90"
             onClick={handleOpenCreateDialog}
             data-testid="button-create"
           >
@@ -3039,10 +3039,10 @@ export default function ContractsPage() {
       </div>
 
       {/* Filter Bar */}
-      <div className="flex items-center gap-2 flex-wrap">
+      <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
         <Popover>
           <PopoverTrigger asChild>
-            <Button variant="outline" size="sm" className="rounded-none gap-2 h-8" data-testid="button-date-filter">
+            <Button variant="outline" size="sm" className="col-span-2 h-10 justify-start gap-2 rounded-none sm:col-auto sm:h-8" data-testid="button-date-filter">
               <CalendarIcon className="w-4 h-4 text-muted-foreground" />
               <span className="text-sm">{format(startDate, "yyyy.MM.dd")} ~ {format(endDate, "yyyy.MM.dd")}</span>
             </Button>
@@ -3057,7 +3057,7 @@ export default function ContractsPage() {
           </PopoverContent>
         </Popover>
         <Select value={managerFilter} onValueChange={setManagerFilter}>
-          <SelectTrigger className="w-auto min-w-[100px] rounded-none h-8 text-sm" data-testid="filter-manager">
+          <SelectTrigger className="h-10 w-full rounded-none text-sm sm:h-8 sm:w-auto sm:min-w-[100px]" data-testid="filter-manager">
             <SelectValue placeholder="담당자" />
           </SelectTrigger>
           <SelectContent className="rounded-none">
@@ -3071,7 +3071,7 @@ export default function ContractsPage() {
         </Select>
 
         <Select value={customerFilter} onValueChange={setCustomerFilter}>
-          <SelectTrigger className="w-auto min-w-[100px] rounded-none h-8 text-sm" data-testid="filter-customer">
+          <SelectTrigger className="h-10 w-full rounded-none text-sm sm:h-8 sm:w-auto sm:min-w-[100px]" data-testid="filter-customer">
             <SelectValue placeholder="고객명" />
           </SelectTrigger>
           <SelectContent className="rounded-none">
@@ -3085,7 +3085,7 @@ export default function ContractsPage() {
         </Select>
 
         <Select value={productFilter} onValueChange={setProductFilter}>
-          <SelectTrigger className="w-auto min-w-[100px] rounded-none h-8 text-sm" data-testid="filter-product">
+          <SelectTrigger className="h-10 w-full rounded-none text-sm sm:h-8 sm:w-auto sm:min-w-[100px]" data-testid="filter-product">
             <SelectValue placeholder="상품구분" />
           </SelectTrigger>
           <SelectContent className="rounded-none">
@@ -3099,7 +3099,7 @@ export default function ContractsPage() {
         </Select>
 
         <Select value={paymentFilter} onValueChange={setPaymentFilter}>
-          <SelectTrigger className="w-auto min-w-[100px] rounded-none h-8 text-sm" data-testid="filter-payment">
+          <SelectTrigger className="h-10 w-full rounded-none text-sm sm:h-8 sm:w-auto sm:min-w-[100px]" data-testid="filter-payment">
             <SelectValue placeholder="결제확인" />
           </SelectTrigger>
           <SelectContent className="rounded-none">
@@ -3115,7 +3115,7 @@ export default function ContractsPage() {
         <Button
           variant="ghost"
           size="icon"
-          className="text-muted-foreground rounded-none h-8 w-8"
+          className="h-10 w-10 rounded-none text-muted-foreground sm:h-8 sm:w-8"
           onClick={() => {
             setManagerFilter("all");
             setCustomerFilter("all");

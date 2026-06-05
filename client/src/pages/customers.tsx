@@ -512,20 +512,20 @@ export default function CustomersPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between border-b border-border px-6 py-4">
-        <div className="flex items-center gap-2">
-          <Users className="h-5 w-5 text-foreground" />
-          <h1 className="text-lg font-bold" data-testid="text-customers-title">
+      <div className="flex flex-col gap-3 border-b border-border px-4 py-4 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex min-w-0 items-center gap-2">
+          <Users className="h-5 w-5 shrink-0 text-foreground" />
+          <h1 className="truncate text-lg font-bold leading-tight" data-testid="text-customers-title">
             고객목록
           </h1>
         </div>
 
-        <div className="flex items-center gap-2">
-          <span className="whitespace-nowrap text-sm text-muted-foreground" data-testid="text-search-count">
+        <div className="grid w-full grid-cols-[1fr_auto_auto] items-center gap-2 lg:flex lg:w-auto">
+          <span className="col-span-3 text-sm text-muted-foreground lg:col-auto" data-testid="text-search-count">
             검색 결과 {filteredCustomers.length}건
           </span>
 
-          <div className="relative">
+          <div className="relative min-w-0">
             <Input
               value={search}
               onChange={(event) => {
@@ -533,7 +533,7 @@ export default function CustomersPage() {
                 setCurrentPage(1);
               }}
               placeholder="고객명/전화번호/유형 검색"
-              className="h-9 w-[230px] rounded-none text-sm"
+              className="h-10 w-full rounded-none pr-9 text-sm lg:w-[260px]"
               data-testid="input-search-customers"
             />
             <Search className="pointer-events-none absolute right-2 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -542,6 +542,7 @@ export default function CustomersPage() {
           <Button
             variant="ghost"
             size="icon"
+            className="h-10 w-10 rounded-none"
             onClick={handleBulkDelete}
             disabled={selectedIds.size === 0 || bulkDeleteMutation.isPending}
             data-testid="button-bulk-delete"
@@ -550,7 +551,7 @@ export default function CustomersPage() {
           </Button>
 
           <Button
-            className="rounded-none"
+            className="h-10 rounded-none px-4"
             onClick={openCreateDialog}
             data-testid="button-add-customer"
           >
@@ -560,7 +561,8 @@ export default function CustomersPage() {
       </div>
 
       <div className="flex-1 overflow-auto">
-        <Table>
+        <div className="min-w-full overflow-x-auto">
+        <Table className="min-w-[640px]">
           <TableHeader>
             <TableRow className="bg-muted/30">
               <TableHead className="w-[40px]">
@@ -617,9 +619,10 @@ export default function CustomersPage() {
             )}
           </TableBody>
         </Table>
+        </div>
       </div>
 
-      <div className="flex items-center justify-between border-t border-border px-6 py-3">
+      <div className="flex flex-col gap-2 border-t border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6">
         <Select
           value={String(pageSize)}
           onValueChange={(value) => {
