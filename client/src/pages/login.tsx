@@ -44,11 +44,11 @@ export default function LoginPage() {
       <Card className="w-full max-w-[400px] rounded-none border-border">
         <div className="p-8">
           <div className="text-center mb-8">
-            <div className="inline-flex items-center justify-center w-14 h-14 bg-primary/10 mb-4">
-              <Lock className="w-7 h-7 text-primary" />
+            <div className="inline-flex items-center justify-center w-14 h-14 mb-4 border border-border bg-background">
+              <img src="/earthloop-logo.png" alt="EARTH LOOP" className="w-12 h-12 object-contain" />
             </div>
             <h1 className="text-2xl font-bold text-foreground" data-testid="text-login-title">
-              CRM 로그인
+              EARTH LOOP CRM
             </h1>
             <p className="text-sm text-muted-foreground mt-2">계정 정보를 입력하여 로그인하세요</p>
           </div>

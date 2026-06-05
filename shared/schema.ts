@@ -256,8 +256,9 @@ export type InsertSystemLog = z.infer<typeof insertSystemLogSchema>;
 export type SystemLog = typeof systemLogs.$inferSelect;
 
 export const productCategories = [
-  "슬롯",
+  "슬롯상품",
   "바이럴상품",
+  "외주 실행비용 상품",
   "기타",
 ] as const;
 export type ProductCategory = typeof productCategories[number];
