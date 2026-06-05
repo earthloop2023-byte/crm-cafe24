@@ -41,6 +41,7 @@ type ContractItem = {
   workCost?: number | string | null;
   fixedWorkCostAmount?: number | string | null;
   supplyAmount?: number | string | null;
+  marginAmount?: number | string | null;
 };
 
 type ContractRow = {
@@ -234,16 +235,29 @@ function getContractSalesAmount(contract: ContractRow): number {
   return toNonNegativeAmount(contract.cost ?? contract.totalAmount);
 }
 
+function getStoredItemWorkCost(item: ContractItem): number {
+  const fixedWorkCostAmount = toNonNegativeAmount(item.fixedWorkCostAmount);
+  if (fixedWorkCostAmount > 0) return fixedWorkCostAmount;
+
+  const supplyAmount = toAmount(item.supplyAmount);
+  const marginAmount = toAmount(item.marginAmount);
+  if (supplyAmount > 0 && Number.isFinite(marginAmount)) {
+    return Math.max(0, supplyAmount - marginAmount);
+  }
+
+  return 0;
+}
+
 function getContractWorkCost(contract: ContractRow): number {
   if (isRefundContract(contract)) return 0;
+  const items = parseProductItems(contract);
+  const storedItemWorkCost = items.reduce((sum, item) => sum + getStoredItemWorkCost(item), 0);
+  if (storedItemWorkCost > 0) return storedItemWorkCost;
+
   const storedContractWorkCost = toNonNegativeAmount(contract.workCost);
   if (storedContractWorkCost > 0) return storedContractWorkCost;
 
-  const items = parseProductItems(contract);
   return items.reduce((sum, item) => {
-    const fixedWorkCostAmount = toNonNegativeAmount(item.fixedWorkCostAmount);
-    if (fixedWorkCostAmount > 0) return sum + fixedWorkCostAmount;
-
     const workerUnitCost = toNonNegativeAmount(item.workCost);
     if (workerUnitCost <= 0) return sum;
 
@@ -447,7 +461,7 @@ export default function SalesAnalyticsPage() {
     { label: "총 매출 금액", value: formatCurrency(totalSales), description: "부가세 제외 공급가 기준", accent: "text-blue-600", icon: CircleDollarSign },
     { label: "총 환불 금액", value: formatCurrency(totalRefunds), description: "환불 계약/환불 내역 기준", accent: "text-red-500", icon: TrendingDown },
     { label: "총 작업 비용", value: formatCurrency(totalWorkCost), description: "계약 항목 작업비 합계", accent: "text-amber-600", icon: Target },
-    { label: "순 수익 금액", value: formatCurrency(netProfit), description: "총 매출 - 총 환불 - 총 작업 비용", accent: "text-emerald-600", icon: TrendingUp },
+    { label: "순 수익 금액", value: formatCurrency(netProfit), description: "총 공급가액 - 작업비 - 환불비용", accent: "text-emerald-600", icon: TrendingUp },
     { label: "슬롯 발주 일수", value: formatCount(slotOrderDays, "일"), description: "슬롯 상품 일수 x 수량", accent: "text-sky-600", icon: CalendarDays },
     { label: "바이럴 판매 건수", value: formatCount(viralSalesCount), description: "바이럴 상품 계약", accent: "text-fuchsia-600", icon: Sparkles },
     { label: "기타 계약 건수", value: formatCount(otherContractCount), description: "슬롯/바이럴 외 계약", accent: "text-zinc-700", icon: Box },
