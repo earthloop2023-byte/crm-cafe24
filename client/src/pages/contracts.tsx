@@ -1355,7 +1355,9 @@ export default function ContractsPage() {
     updated.worker = String(snapshot?.worker ?? selectedProduct.worker ?? "");
     updated.workCost = Number(snapshot?.workCost ?? selectedProduct.workCost) || 0;
     updated.fixedWorkCostAmount = null;
-    updated.vatType = normalizeVatType(String(snapshot?.vatType ?? selectedProduct.vatType ?? ""));
+    updated.vatType = String(updated.vatType || "").trim()
+      ? normalizeVatType(updated.vatType)
+      : DEFAULT_CREATE_VAT_TYPE;
     return updated;
   };
 

@@ -21,6 +21,7 @@ const DEFAULT_PRODUCT_DETAIL_BY_GROUP: Record<string, string> = {
   바이럴상품: "바이럴상품",
   기타: "기타",
 };
+const HIDDEN_PRODUCT_DETAIL_LABELS = new Set(["슬롯", "바이럴상품"]);
 
 function normalizeCategoryKey(value: unknown): string {
   return String(value || "").replace(/\s+/g, "").trim();
@@ -63,6 +64,10 @@ function resolveProductDetail(category: unknown, unit: unknown): string {
   }
 
   return categoryLabel;
+}
+
+function isHiddenProductDetail(value: unknown): boolean {
+  return HIDDEN_PRODUCT_DETAIL_LABELS.has(String(value || "").trim());
 }
 
 export default function ProductsPage() {
@@ -146,7 +151,7 @@ export default function ProductsPage() {
       name: "",
       category: productCategories[0],
       unitPrice: 0,
-      unit: DEFAULT_PRODUCT_DETAIL_BY_GROUP[productCategories[0]] || "",
+      unit: "",
       baseDays: undefined,
       workCost: undefined,
       worker: "",
@@ -159,7 +164,7 @@ export default function ProductsPage() {
 
   const handleSubmit = () => {
     if (!formData.name) {
-      toast({ title: "상품명을 입력해주세요.", variant: "destructive" });
+      toast({ title: "상품명(실행사)을 입력해주세요.", variant: "destructive" });
       return;
     }
     const resolvedCategory = normalizeProductCategoryGroup(formData.category);
@@ -179,7 +184,7 @@ export default function ProductsPage() {
     const payload = {
       ...formData,
       category: resolvedCategory,
-      unit: resolvedProductDetail || DEFAULT_PRODUCT_DETAIL_BY_GROUP[resolvedCategory] || "",
+      unit: resolvedProductDetail,
       effectiveFrom,
     };
     if (editingProduct) {
@@ -198,7 +203,7 @@ export default function ProductsPage() {
       name: product.name,
       category: normalizedCategory,
       unitPrice: product.unitPrice,
-      unit: resolvedProductDetail || DEFAULT_PRODUCT_DETAIL_BY_GROUP[normalizedCategory] || "",
+      unit: isHiddenProductDetail(resolvedProductDetail) ? "" : resolvedProductDetail,
       baseDays: product.baseDays || 0,
       workCost: product.workCost || 0,
       worker: product.worker || "",
@@ -222,14 +227,14 @@ export default function ProductsPage() {
   const productDetailOptionsByCategory = useMemo(() => {
     const optionMap = new Map<string, string[]>();
     for (const category of categoryOptions) {
-      optionMap.set(category, [DEFAULT_PRODUCT_DETAIL_BY_GROUP[category] || category]);
+      optionMap.set(category, []);
     }
 
     for (const product of visibleProducts) {
       const categoryGroup = normalizeProductCategoryGroup(product.category);
       if (!optionMap.has(categoryGroup)) continue;
       const detail = resolveProductDetail(product.category, product.unit);
-      if (!detail) continue;
+      if (!detail || isHiddenProductDetail(detail)) continue;
       const details = optionMap.get(categoryGroup)!;
       if (!details.includes(detail)) {
         details.push(detail);
@@ -240,19 +245,14 @@ export default function ProductsPage() {
     const selectedDetail = String(formData.unit || "").trim();
     if (selectedCategory && selectedDetail && selectedDetail !== PRODUCT_DETAIL_CUSTOM_VALUE) {
       const details = optionMap.get(selectedCategory) || [];
-      if (!details.includes(selectedDetail)) {
+      if (!isHiddenProductDetail(selectedDetail) && !details.includes(selectedDetail)) {
         details.unshift(selectedDetail);
       }
       optionMap.set(selectedCategory, details);
     }
 
     Array.from(optionMap.entries()).forEach(([category, details]) => {
-      const baseDetail = DEFAULT_PRODUCT_DETAIL_BY_GROUP[category];
-      const sorted = Array.from(new Set(details)).sort((left, right) => {
-        if (left === baseDetail) return -1;
-        if (right === baseDetail) return 1;
-        return left.localeCompare(right, "ko");
-      });
+      const sorted = Array.from(new Set(details)).sort((left, right) => left.localeCompare(right, "ko"));
       optionMap.set(category, [...sorted, PRODUCT_DETAIL_CUSTOM_VALUE]);
     });
 
@@ -288,7 +288,7 @@ export default function ProductsPage() {
       <div className="grid grid-cols-4 gap-4">
         <div className="space-y-2">
           <Label className="text-sm">
-            <span className="text-red-500">*</span> 상품명
+            <span className="text-red-500">*</span> 상품명(실행사)
           </Label>
           <Input
             className="rounded-none"
@@ -542,7 +542,7 @@ export default function ProductsPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="text-xs whitespace-nowrap">상품명</TableHead>
+                  <TableHead className="text-xs whitespace-nowrap">상품명(실행사)</TableHead>
                   <TableHead className="text-xs whitespace-nowrap">상품구분</TableHead>
                   <TableHead className="text-xs whitespace-nowrap">상품상세</TableHead>
                   <TableHead className="text-xs whitespace-nowrap">기준일수</TableHead>
@@ -561,7 +561,12 @@ export default function ProductsPage() {
                         {normalizeProductCategoryGroup(product.category) || "-"}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-xs whitespace-nowrap">{resolveProductDetail(product.category, product.unit) || "-"}</TableCell>
+                    <TableCell className="text-xs whitespace-nowrap">
+                      {(() => {
+                        const productDetail = resolveProductDetail(product.category, product.unit);
+                        return productDetail && !isHiddenProductDetail(productDetail) ? productDetail : "-";
+                      })()}
+                    </TableCell>
                     <TableCell className="text-xs whitespace-nowrap">{`${product.baseDays ?? 0}일`}</TableCell>
                     <TableCell className="text-right text-xs whitespace-nowrap">{formatPrice(product.workCost ?? 0)}</TableCell>
                     <TableCell className="text-xs whitespace-nowrap">{product.worker || "-"}</TableCell>

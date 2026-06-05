@@ -162,7 +162,7 @@ function AuthenticatedApp() {
                       <UserProfileMenu />
                     </div>
                   </header>
-                  <main className="flex-1 overflow-auto">
+                  <main className="min-h-0 flex-1 overflow-auto">
                     <Router />
                   </main>
                 </div>
