@@ -31,6 +31,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { DatePeriodFilter } from "@/components/date-period-filter";
+import { useAuth } from "@/lib/auth";
 import type { User } from "@shared/schema";
 
 type ContractItem = {
@@ -53,6 +54,7 @@ type ContractRow = {
   companyName?: string | null;
   products?: string | null;
   manager?: string | null;
+  managerId?: string | null;
   managerName?: string | null;
   contractDate?: string | Date | null;
   contractStartDate?: string | Date | null;
@@ -370,6 +372,7 @@ function fetchJson<T>(url: string): Promise<T> {
 }
 
 export default function SalesAnalyticsPage() {
+  const { user: currentUser } = useAuth();
   const todayKey = toDateKey(new Date());
   const [startDate, setStartDate] = useState(`${todayKey.slice(0, 8)}01`);
   const [endDate, setEndDate] = useState(todayKey);
@@ -400,19 +403,48 @@ export default function SalesAnalyticsPage() {
   });
 
   const productByName = useMemo(() => buildProductMap(products), [products]);
+  const isManagerUser = String(currentUser?.role || "").trim() === "매니저";
+
+  const isOwnManagedContract = (contract: ContractRow) => {
+    const currentUserId = String(currentUser?.id || "").trim();
+    const currentUserName = String(currentUser?.name || "").trim();
+    const managerId = String(contract.managerId || "").trim();
+    const managerName = String(contract.managerName || contract.manager || "").trim();
+    return (!!currentUserId && managerId === currentUserId) || (!!currentUserName && managerName === currentUserName);
+  };
+
+  const accessibleContracts = useMemo(() => {
+    if (!isManagerUser) return contracts;
+    return contracts.filter(isOwnManagedContract);
+  }, [contracts, currentUser?.id, currentUser?.name, isManagerUser]);
+
+  const accessibleContractIds = useMemo(
+    () => new Set(accessibleContracts.map((contract) => contract.id)),
+    [accessibleContracts],
+  );
+
+  const accessibleRefunds = useMemo(() => {
+    if (!isManagerUser) return refunds;
+    const currentUserName = String(currentUser?.name || "").trim();
+    return refunds.filter((refund) => {
+      if (refund.contractId && accessibleContractIds.has(refund.contractId)) return true;
+      return !!currentUserName && String(refund.managerName || "").trim() === currentUserName;
+    });
+  }, [accessibleContractIds, currentUser?.name, isManagerUser, refunds]);
 
   const managerOptions = useMemo(() => {
+    if (isManagerUser && currentUser?.name) return [currentUser.name];
     const names = new Set(
       users
         .map((user) => String(user.name || "").trim())
         .filter(Boolean),
     );
     return Array.from(names).sort((a, b) => a.localeCompare(b, "ko"));
-  }, [users]);
+  }, [currentUser?.name, isManagerUser, users]);
 
   const filteredContracts = useMemo(() => {
     const keyword = searchTerm.trim().toLowerCase();
-    return contracts.filter((contract) => {
+    return accessibleContracts.filter((contract) => {
       if (!isWithinDateRange(getContractDate(contract), startDate, endDate)) return false;
       const manager = String(contract.managerName || contract.manager || "").trim();
       if (managerFilter !== "all" && manager !== managerFilter) return false;
@@ -427,17 +459,17 @@ export default function SalesAnalyticsPage() {
         ...names,
       ].some((value) => String(value || "").toLowerCase().includes(keyword));
     });
-  }, [contracts, endDate, managerFilter, productByName, searchTerm, startDate]);
+  }, [accessibleContracts, endDate, managerFilter, productByName, searchTerm, startDate]);
 
   const filteredRefunds = useMemo(() => {
     const filteredContractIds = new Set(filteredContracts.map((contract) => contract.id));
-    return refunds.filter((refund) => {
+    return accessibleRefunds.filter((refund) => {
       if (!isWithinDateRange(refund.refundDate || refund.createdAt, startDate, endDate)) return false;
       if (managerFilter === "all") return true;
       if (String(refund.managerName || "").trim() === managerFilter) return true;
       return !!refund.contractId && filteredContractIds.has(refund.contractId);
     });
-  }, [endDate, filteredContracts, managerFilter, refunds, startDate]);
+  }, [accessibleRefunds, endDate, filteredContracts, managerFilter, startDate]);
 
   const filteredDeals = useMemo(() => {
     return deals.filter((deal) => isWithinDateRange(getDealDate(deal), startDate, endDate));
@@ -472,13 +504,13 @@ export default function SalesAnalyticsPage() {
     return Array.from({ length: 12 }, (_, index) => {
       const month = String(index + 1).padStart(2, "0");
       const monthKey = `${chartYear}-${month}`;
-      const monthContracts = contracts.filter((contract) => {
+      const monthContracts = accessibleContracts.filter((contract) => {
         if (toMonthKey(getContractDate(contract)) !== monthKey) return false;
         const manager = String(contract.managerName || contract.manager || "").trim();
         return managerFilter === "all" || manager === managerFilter;
       });
       const monthContractIds = new Set(monthContracts.map((contract) => contract.id));
-      const monthRefundRows = refunds.filter((refund) => {
+      const monthRefundRows = accessibleRefunds.filter((refund) => {
         if (toMonthKey(refund.refundDate || refund.createdAt) !== monthKey) return false;
         if (managerFilter === "all") return true;
         if (String(refund.managerName || "").trim() === managerFilter) return true;
@@ -497,7 +529,7 @@ export default function SalesAnalyticsPage() {
         workCost,
       };
     });
-  }, [chartYear, contracts, managerFilter, refunds]);
+  }, [accessibleContracts, accessibleRefunds, chartYear, managerFilter]);
 
   const managerRows = useMemo(() => {
     const rows = new Map<string, { manager: string; sales: number; count: number; workCost: number }>();
@@ -532,13 +564,13 @@ export default function SalesAnalyticsPage() {
     return Array.from({ length: 3 }, (_, index) => {
       const date = new Date(target.getFullYear(), target.getMonth() - (2 - index), 1);
       const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-      const monthContracts = contracts.filter((contract) => {
+      const monthContracts = accessibleContracts.filter((contract) => {
         if (toMonthKey(getContractDate(contract)) !== monthKey) return false;
         const manager = String(contract.managerName || contract.manager || "").trim();
         return managerFilter === "all" || manager === managerFilter;
       });
       const monthContractIds = new Set(monthContracts.map((contract) => contract.id));
-      const monthRefundRows = refunds.filter((refund) => {
+      const monthRefundRows = accessibleRefunds.filter((refund) => {
         if (toMonthKey(refund.refundDate || refund.createdAt) !== monthKey) return false;
         if (managerFilter === "all") return true;
         if (String(refund.managerName || "").trim() === managerFilter) return true;
@@ -558,7 +590,7 @@ export default function SalesAnalyticsPage() {
         netProfit: sales - Math.max(refundsByContract, refundsByRows) - workCost,
       };
     });
-  }, [contracts, endDate, managerFilter, refunds]);
+  }, [accessibleContracts, accessibleRefunds, endDate, managerFilter]);
 
   const yearOptions = Array.from({ length: 4 }, (_, index) => String(Number(todayKey.slice(0, 4)) - index));
   const metricCards: MetricCard[] = [
