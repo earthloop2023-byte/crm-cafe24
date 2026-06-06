@@ -1,8 +1,7 @@
-[variables]
-NIXPACKS_METADATA = "nodejs"
-NIXPACKS_RUNTIME = "nodejs"
-
 providers = ["node"]
+
+[variables]
+NIXPACKS_NODE_VERSION = "20"
 
 [phases.install]
 cmds = ["npm ci --no-audit --no-fund"]
