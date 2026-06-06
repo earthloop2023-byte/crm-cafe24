@@ -471,7 +471,6 @@ httpServer.listen(
   {
     port,
     host: "0.0.0.0",
-    reusePort: process.platform !== "win32",
   },
   () => {
     log(`serving on port ${port}`);
