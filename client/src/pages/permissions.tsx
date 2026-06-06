@@ -10,16 +10,24 @@ import { allPages, departmentDefaultPages } from "@shared/schema";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
+import { usePermissions } from "@/lib/permissions";
+
+const INTENDED_PERMISSION_ADMIN_ROLES = ["\uB300\uD45C\uC774\uC0AC", "\uCD1D\uAD04\uC774\uC0AC", "\uAC1C\uBC1C\uC790"];
 
 const PERMISSION_ADMIN_ROLES = ["대표이사", "총괄이사", "개발자"];
 
 export default function PermissionsPage() {
   const { toast } = useToast();
   const { user: currentUser } = useAuth();
+  const { hasPageAccess } = usePermissions();
   const [localPermissions, setLocalPermissions] = useState<Record<string, string[]>>({});
   const [hasChanges, setHasChanges] = useState(false);
 
-  const canEdit = currentUser && PERMISSION_ADMIN_ROLES.includes(currentUser.role || "");
+  const canEdit =
+    !!currentUser &&
+    (PERMISSION_ADMIN_ROLES.includes(currentUser.role || "") ||
+      INTENDED_PERMISSION_ADMIN_ROLES.includes(currentUser.role || "") ||
+      hasPageAccess("permissions"));
 
   const { data: users = [], isLoading: usersLoading } = useQuery<User[]>({
     queryKey: ["/api/users"],
@@ -30,7 +38,9 @@ export default function PermissionsPage() {
   });
 
   const activeUsers = users.filter(u => u.isActive && u.workStatus !== "퇴사");
-  const nonAdminUsers = activeUsers.filter(u => !PERMISSION_ADMIN_ROLES.includes(u.role || ""));
+  const nonAdminUsers = activeUsers.filter(
+    u => !PERMISSION_ADMIN_ROLES.includes(u.role || "") && !INTENDED_PERMISSION_ADMIN_ROLES.includes(u.role || ""),
+  );
 
   const normalizePageKeys = (pageKeys: string[]) => {
     return Array.from(new Set(pageKeys.flatMap((pageKey) => (pageKey === "dashboard" ? ["sales_analytics"] : [pageKey]))));

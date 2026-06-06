@@ -36,10 +36,13 @@ import { Pagination } from "@/components/pagination";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useSettings } from "@/lib/settings";
 import { useAuth } from "@/lib/auth";
+import { usePermissions } from "@/lib/permissions";
 import { useToast } from "@/hooks/use-toast";
 import type { User } from "@shared/schema";
 
 const roleOptions = ["A", "B"];
+const EXECUTIVE_DEPARTMENT = "\uACBD\uC601\uC9C4";
+const MANAGEMENT_ROLES = ["\uB300\uD45C\uC774\uC0AC", "\uCD1D\uAD04\uC774\uC0AC", "\uAC1C\uBC1C\uC790"];
 const departmentOptions = ["개발팀", "마케팅팀", "경영진", "경영지원팀"];
 const WORK_STATUS_EMPLOYED = "\uC7AC\uC9C1\uC911";
 const WORK_STATUS_ON_LEAVE = "\uD734\uC9C1\uC911";
@@ -48,6 +51,10 @@ const workStatusOptions = [WORK_STATUS_EMPLOYED, WORK_STATUS_ON_LEAVE, WORK_STAT
 
 const isHiddenSystemAdmin = (user: User) =>
   user.loginId?.trim().toLowerCase() === "admin" || user.id === "__local_admin__";
+
+const isExecutiveUser = (user?: User | null) =>
+  !!user &&
+  (MANAGEMENT_ROLES.includes(user.role || "") || String(user.department || "").trim() === EXECUTIVE_DEPARTMENT);
 
 function createUserFormSchema(pwMinLength: number) {
   return z.object({
@@ -122,8 +129,11 @@ function normalizeWorkStatus(status?: string | null): string {
 export default function Users() {
   const { toast } = useToast();
   const { user: currentUser } = useAuth();
+  const { hasPageAccess } = usePermissions();
   const { formatDateTime, settings } = useSettings();
   const pwMinLength = parseInt(settings.password_min_length, 10) || 8;
+  const canManageUsers = isExecutiveUser(currentUser);
+  const canGrantPermissions = hasPageAccess("permissions");
 
   const [searchTerm, setSearchTerm] = useState("");
   const [pageSize, setPageSize] = useState("10");
@@ -186,7 +196,10 @@ export default function Users() {
   const updateMutation = useMutation({
     mutationFn: async (data: UserEditFormData & { id: string }) => {
       const { id, ...body } = data;
-      const sendData: Record<string, unknown> = { ...body };
+      const sendData: Record<string, unknown> = canManageUsers
+        ? { ...body }
+        : { password: body.password, email: body.email, phone: body.phone };
+      if (!canGrantPermissions) delete sendData.role;
       if (!sendData.password) delete sendData.password;
       return apiRequest("PUT", `/api/users/${id}`, sendData);
     },
@@ -226,6 +239,10 @@ export default function Users() {
   });
 
   const requestDeleteUsers = (userIds: string[]) => {
+    if (!canManageUsers) {
+      toast({ title: "사용자 삭제는 경영진만 가능합니다.", variant: "destructive" });
+      return;
+    }
     const targets = userIds.filter((id) => id !== currentUser?.id);
     if (targets.length === 0) {
       toast({ title: "본인 계정은 삭제할 수 없습니다.", variant: "destructive" });
@@ -270,6 +287,10 @@ export default function Users() {
   };
 
   const openEditDialog = (user: User) => {
+    if (!canManageUsers && user.id !== currentUser?.id) {
+      toast({ title: "다른 사용자 정보 수정은 경영진만 가능합니다.", variant: "destructive" });
+      return;
+    }
     setEditingUser(user);
     editForm.reset({
       loginId: user.loginId,
@@ -297,6 +318,11 @@ export default function Users() {
     { key: "actions", label: "" },
   ];
 
+  const canEditSelectedUser = !!editingUser && (canManageUsers || editingUser.id === currentUser?.id);
+  const canEditFullFields = !!editingUser && canManageUsers;
+  const canEditContactFields = !!editingUser && (canManageUsers || editingUser.id === currentUser?.id);
+  const canEditRoleField = canEditFullFields && canGrantPermissions;
+
   return (
     <div className="p-6">
       <div className="flex items-center justify-between mb-6 gap-3 flex-wrap">
@@ -321,7 +347,7 @@ export default function Users() {
 
           <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
             <DialogTrigger asChild>
-              <Button className="rounded-none" data-testid="button-register">
+              <Button className="rounded-none" data-testid="button-register" disabled={!canManageUsers || !canGrantPermissions}>
                 등록
               </Button>
             </DialogTrigger>
@@ -405,7 +431,7 @@ export default function Users() {
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>권한</FormLabel>
-                        <Select onValueChange={field.onChange} value={field.value}>
+                        <Select onValueChange={field.onChange} value={field.value} disabled={!canGrantPermissions}>
                           <FormControl>
                             <SelectTrigger className="rounded-none" data-testid="select-role">
                               <SelectValue placeholder="권한 선택" />
@@ -474,7 +500,7 @@ export default function Users() {
                   <Button
                     type="submit"
                     className="w-full rounded-none md:col-span-2"
-                    disabled={createMutation.isPending}
+                    disabled={createMutation.isPending || !canManageUsers || !canGrantPermissions}
                   >
                     {createMutation.isPending ? "등록 중..." : "등록"}
                   </Button>
@@ -485,7 +511,7 @@ export default function Users() {
           <Button
             variant="destructive"
             className="rounded-none"
-            disabled={selectedUsers.length === 0 || deleteMutation.isPending}
+            disabled={selectedUsers.length === 0 || deleteMutation.isPending || !canManageUsers}
             onClick={() => requestDeleteUsers(selectedUsers)}
             data-testid="button-delete-selected-users"
           >
@@ -493,6 +519,15 @@ export default function Users() {
           </Button>
         </div>
       </div>
+
+      <Card className="rounded-none border-border p-4 mb-4 bg-muted/20">
+        <div className="space-y-2 text-sm">
+          <p className="font-semibold">권한 등급 A/B 기준</p>
+          <p><span className="font-semibold">A</span>: 일반 운영 등급입니다. 실제 접근 가능 메뉴는 권한설정 화면에서 체크된 페이지 권한을 우선 적용합니다.</p>
+          <p><span className="font-semibold">B</span>: 확장 운영/관리 등급입니다. A보다 높은 등급으로 분류하지만, 사용자관리에서 A/B를 부여하려면 별도로 권한설정 권한이 있어야 합니다.</p>
+          <p className="text-muted-foreground">사용자 정보 전체 수정은 경영진만 가능하며, 일반 사용자는 본인 비밀번호, 이메일, 연락처만 수정할 수 있습니다.</p>
+        </div>
+      </Card>
 
       <Card className="rounded-none border-border overflow-hidden">
         <div className="overflow-x-auto">
@@ -503,6 +538,7 @@ export default function Users() {
                   <Checkbox
                     checked={selectedUsers.length === paginatedUsers.length && paginatedUsers.length > 0}
                     onCheckedChange={toggleSelectAll}
+                    disabled={!canManageUsers}
                     className="rounded-none"
                   />
                 </th>
@@ -536,6 +572,7 @@ export default function Users() {
                       <Checkbox
                         checked={selectedUsers.includes(user.id)}
                         onCheckedChange={() => toggleSelectUser(user.id)}
+                        disabled={!canManageUsers}
                         className="rounded-none"
                       />
                     </td>
@@ -556,7 +593,7 @@ export default function Users() {
                           variant="ghost"
                           size="icon"
                           className="rounded-none text-destructive hover:text-destructive"
-                          disabled={deleteMutation.isPending}
+                          disabled={deleteMutation.isPending || !canManageUsers}
                           onClick={() => requestDeleteUsers([user.id])}
                           data-testid={`button-delete-user-${user.id}`}
                         >
@@ -613,7 +650,7 @@ export default function Users() {
                   <FormItem>
                     <FormLabel>로그인ID</FormLabel>
                     <FormControl>
-                      <Input {...field} className="rounded-none" />
+                      <Input {...field} className="rounded-none" disabled={!canEditFullFields} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -626,7 +663,7 @@ export default function Users() {
                   <FormItem>
                     <FormLabel>비밀번호(변경 시만 입력)</FormLabel>
                     <FormControl>
-                      <Input type="password" {...field} className="rounded-none" />
+                      <Input type="password" {...field} className="rounded-none" disabled={!canEditContactFields} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -639,7 +676,7 @@ export default function Users() {
                   <FormItem>
                     <FormLabel>사용자명</FormLabel>
                     <FormControl>
-                      <Input {...field} className="rounded-none" />
+                      <Input {...field} className="rounded-none" disabled={!canEditFullFields} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -652,7 +689,7 @@ export default function Users() {
                   <FormItem>
                     <FormLabel>이메일</FormLabel>
                     <FormControl>
-                      <Input type="email" {...field} className="rounded-none" />
+                      <Input type="email" {...field} className="rounded-none" disabled={!canEditContactFields} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -665,7 +702,7 @@ export default function Users() {
                   <FormItem>
                     <FormLabel>연락처</FormLabel>
                     <FormControl>
-                      <Input {...field} className="rounded-none" />
+                      <Input {...field} className="rounded-none" disabled={!canEditContactFields} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -677,7 +714,7 @@ export default function Users() {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>권한</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
+                    <Select onValueChange={field.onChange} value={field.value} disabled={!canEditRoleField}>
                       <FormControl>
                         <SelectTrigger className="rounded-none">
                           <SelectValue placeholder="권한 선택" />
@@ -701,7 +738,7 @@ export default function Users() {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>부서</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
+                    <Select onValueChange={field.onChange} value={field.value} disabled={!canEditFullFields}>
                       <FormControl>
                         <SelectTrigger className="rounded-none">
                           <SelectValue placeholder="부서 선택" />
@@ -725,7 +762,7 @@ export default function Users() {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>근무상태</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
+                    <Select onValueChange={field.onChange} value={field.value} disabled={!canEditFullFields}>
                       <FormControl>
                         <SelectTrigger className="rounded-none">
                           <SelectValue placeholder="근무상태 선택" />
@@ -746,7 +783,7 @@ export default function Users() {
               <Button
                 type="submit"
                 className="w-full rounded-none md:col-span-2"
-                disabled={updateMutation.isPending}
+                disabled={updateMutation.isPending || !canEditSelectedUser}
               >
                 {updateMutation.isPending ? "수정 중..." : "수정"}
               </Button>

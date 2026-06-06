@@ -71,6 +71,11 @@ import {
   summarizeRegionalCustomerListDetailState,
 } from "@shared/regional-customer-list";
 
+const INTENDED_PERMISSION_ADMIN_ROLES = ["\uB300\uD45C\uC774\uC0AC", "\uCD1D\uAD04\uC774\uC0AC", "\uAC1C\uBC1C\uC790"];
+const EXECUTIVE_DEPARTMENTS = new Set(["\uACBD\uC601\uC9C4"]);
+const USER_PERMISSION_FIELDS = new Set(["role"]);
+const USER_SELF_EDIT_FIELDS = new Set(["password", "email", "phone"]);
+
 const PERMISSION_ADMIN_ROLES = ["대표이사", "총괄이사", "개발자"];
 const DEPOSIT_ACTION_ALLOWED_DEPARTMENTS = new Set(["경영지원팀", "개발팀"]);
 const REGIONAL_CUSTOMER_LIST_ALLOWED_DEPARTMENTS = new Set(["타지역팀"]);
@@ -2742,12 +2747,51 @@ export async function registerRoutes(
     }
   });
 
+  function isPermissionAdminRole(role?: string | null) {
+    const normalizedRole = String(role || "").trim();
+    return PERMISSION_ADMIN_ROLES.includes(normalizedRole) || INTENDED_PERMISSION_ADMIN_ROLES.includes(normalizedRole);
+  }
+
+  function isExecutiveUser(user?: { role?: string | null; department?: string | null } | null) {
+    if (!user) return false;
+    return isPermissionAdminRole(user.role) || EXECUTIVE_DEPARTMENTS.has(String(user.department || "").trim());
+  }
+
+  async function hasPermissionSettingsAccess(user?: { id?: string | null; role?: string | null; department?: string | null } | null) {
+    if (!user?.id) return false;
+    if (isPermissionAdminRole(user.role)) return true;
+    const permissions = await storage.getPagePermissionsByUser(user.id);
+    return permissions.some((permission) => permission.pageKey === "permissions");
+  }
+
+  async function requireExecutiveUserManagement(req: Request, res: Response, next: NextFunction) {
+    if (!req.session.userId) {
+      return res.status(401).json({ error: "로그인이 필요합니다." });
+    }
+    const currentUser = await storage.getUser(req.session.userId);
+    if (!isExecutiveUser(currentUser)) {
+      return res.status(403).json({ error: "사용자 등록, 삭제, 전체 수정은 경영진만 가능합니다." });
+    }
+    next();
+  }
+
+  async function requirePermissionSettingsAccess(req: Request, res: Response, next: NextFunction) {
+    if (!req.session.userId) {
+      return res.status(401).json({ error: "로그인이 필요합니다." });
+    }
+    const currentUser = await storage.getUser(req.session.userId);
+    if (!(await hasPermissionSettingsAccess(currentUser))) {
+      return res.status(403).json({ error: "권한설정 권한이 있는 사용자만 권한을 부여할 수 있습니다." });
+    }
+    next();
+  }
+
   async function requireAdmin(req: Request, res: Response, next: NextFunction) {
     if (!req.session.userId) {
       return res.status(401).json({ error: "로그인이 필요합니다." });
     }
     const currentUser = await storage.getUser(req.session.userId);
-    if (!currentUser || !PERMISSION_ADMIN_ROLES.includes(currentUser.role || "")) {
+    if (!currentUser || !isPermissionAdminRole(currentUser.role)) {
       return res.status(403).json({ error: "관리자 권한이 필요합니다." });
     }
     next();
@@ -2829,7 +2873,7 @@ export async function registerRoutes(
       .regex(/[!@#$%^&*(),.?":{}|<>]/, "비밀번호에 특수문자가 포함되어야 합니다.");
   }
 
-  app.post("/api/users", requireAdmin, async (req, res) => {
+  app.post("/api/users", requireExecutiveUserManagement, requirePermissionSettingsAccess, async (req, res) => {
     try {
       const parsed = insertUserSchema.safeParse(req.body);
       if (!parsed.success) {
@@ -2844,7 +2888,7 @@ export async function registerRoutes(
       const user = await storage.createUser(parsed.data);
       const dept = parsed.data.department;
       const role = parsed.data.role;
-      if (dept && !PERMISSION_ADMIN_ROLES.includes(role || "") && departmentDefaultPages[dept]) {
+      if (dept && !isPermissionAdminRole(role) && departmentDefaultPages[dept]) {
         await storage.setPagePermissions(user.id, departmentDefaultPages[dept]);
       }
       const { password: _p, ...safeUser } = user;
@@ -2858,12 +2902,40 @@ export async function registerRoutes(
     }
   });
 
-  app.put("/api/users/:id", requireAdmin, async (req, res) => {
+  app.put("/api/users/:id", async (req, res) => {
     try {
       const userId = toSingleString(req.params.id);
+      const currentUser = req.session.userId ? await storage.getUser(req.session.userId) : null;
+      if (!currentUser) {
+        return res.status(401).json({ error: "로그인이 필요합니다." });
+      }
+
+      const oldUser = await storage.getUser(userId);
+      if (!oldUser) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
       const parsed = insertUserSchema.partial().safeParse(req.body);
       if (!parsed.success) {
         return res.status(400).json({ error: "Invalid user data", details: parsed.error });
+      }
+      const requestedFields = Object.keys(parsed.data);
+      const canEditAllUserFields = isExecutiveUser(currentUser);
+      const canGrantPermissions = await hasPermissionSettingsAccess(currentUser);
+      const isSelfEdit = currentUser.id === userId;
+
+      if (!canEditAllUserFields) {
+        if (!isSelfEdit) {
+          return res.status(403).json({ error: "다른 사용자 정보 수정은 경영진만 가능합니다." });
+        }
+        const forbiddenFields = requestedFields.filter((field) => !USER_SELF_EDIT_FIELDS.has(field));
+        if (forbiddenFields.length > 0) {
+          return res.status(403).json({ error: "일반 사용자는 본인 비밀번호, 이메일, 연락처만 수정할 수 있습니다." });
+        }
+      }
+
+      if (requestedFields.some((field) => USER_PERMISSION_FIELDS.has(field)) && !canGrantPermissions) {
+        return res.status(403).json({ error: "권한설정 권한이 있는 사용자만 A/B 권한 등급을 부여할 수 있습니다." });
       }
       if (parsed.data.password) {
         const passwordPolicy = await getPasswordPolicy();
@@ -2873,13 +2945,12 @@ export async function registerRoutes(
         }
         parsed.data.password = await bcrypt.hash(parsed.data.password, 10);
       }
-      const oldUser = await storage.getUser(userId);
       const user = await storage.updateUser(userId, parsed.data);
       if (!user) {
         return res.status(404).json({ error: "User not found" });
       }
       if (parsed.data.department && parsed.data.department !== oldUser?.department &&
-          !PERMISSION_ADMIN_ROLES.includes(user.role || "") &&
+          !isPermissionAdminRole(user.role) &&
           departmentDefaultPages[parsed.data.department]) {
         await storage.setPagePermissions(user.id, departmentDefaultPages[parsed.data.department]);
       }
@@ -2891,7 +2962,7 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/users/:id", requireAdmin, async (req, res) => {
+  app.delete("/api/users/:id", requireExecutiveUserManagement, async (req, res) => {
     try {
       const userId = toSingleString(req.params.id);
       await storage.deleteUser(userId);
@@ -4976,7 +5047,7 @@ export async function registerRoutes(
         return res.status(401).json({ error: "로그인이 필요합니다." });
       }
       const currentUser = await storage.getUser(req.session.userId);
-      if (!currentUser || !PERMISSION_ADMIN_ROLES.includes(currentUser.role || "")) {
+      if (!(await hasPermissionSettingsAccess(currentUser))) {
         return res.status(403).json({ error: "권한 설정은 대표이사, 총괄이사, 개발자만 수정할 수 있습니다." });
       }
       const parsed = setPermissionsSchema.safeParse(req.body);
@@ -4997,7 +5068,7 @@ export async function registerRoutes(
         return res.status(401).json({ error: "로그인이 필요합니다." });
       }
       const currentUser = await storage.getUser(req.session.userId);
-      if (!currentUser || !PERMISSION_ADMIN_ROLES.includes(currentUser.role || "")) {
+      if (!(await hasPermissionSettingsAccess(currentUser))) {
         return res.status(403).json({ error: "권한 설정은 대표이사, 총괄이사, 개발자만 수정할 수 있습니다." });
       }
       const targetUser = await storage.getUser(req.params.userId);
