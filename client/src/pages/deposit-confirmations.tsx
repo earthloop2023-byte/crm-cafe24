@@ -433,6 +433,39 @@ export default function DepositConfirmationsPage() {
     return ["true", "1", "y", "yes", "o", "발행", "발급", "포함", "부가세포함"].includes(normalized);
   };
 
+  const getContractVatDisplay = (contract?: Contract | null) => {
+    if (!contract) return "-";
+    const normalizeVatLabel = (value: string | null | undefined) => {
+      const normalized = String(value || "").replace(/\s+/g, "").toLowerCase();
+      if (!normalized) return "";
+      if (["true", "1", "y", "yes", "o", "\uBC1C\uD589", "\uBC1C\uAE09", "\uD3EC\uD568", "\uBD80\uAC00\uC138\uD3EC\uD568"].includes(normalized)) {
+        return "\uD3EC\uD568";
+      }
+      if (["\uBA74\uC138", "taxfree"].includes(normalized)) return "\uBA74\uC138";
+      if (["false", "0", "n", "no", "x", "\uBBF8\uBC1C\uD589", "\uBBF8\uBC1C\uAE09", "\uBBF8\uD3EC\uD568", "\uBCC4\uB3C4", "\uBD80\uAC00\uC138\uBCC4\uB3C4"].includes(normalized)) {
+        return "\uBBF8\uD3EC\uD568";
+      }
+      return "";
+    };
+
+    const invoiceVat = normalizeVatLabel(contract.invoiceIssued);
+    if (invoiceVat) return invoiceVat;
+
+    const itemVatLabels = Array.from(
+      new Set(parseStoredProductItems(contract).map((item) => normalizeVatLabel(item.vatType)).filter(Boolean)),
+    );
+    if (itemVatLabels.length === 1) return itemVatLabels[0];
+    if (itemVatLabels.length > 1) return "\uD63C\uD569";
+    return "-";
+  };
+
+  const getVatBadgeClassName = (vatDisplay: string) => {
+    if (vatDisplay === "\uD3EC\uD568") return "border-blue-200 bg-blue-50 text-blue-700";
+    if (vatDisplay === "\uBBF8\uD3EC\uD568") return "border-amber-200 bg-amber-50 text-amber-700";
+    if (vatDisplay === "\uBA74\uC138") return "border-green-200 bg-green-50 text-green-700";
+    return "border-muted bg-muted/40 text-muted-foreground";
+  };
+
   const getItemQuantity = (item: MatchProductItem) => {
     const addQuantity = Math.max(0, Number(item.addQuantity) || 0);
     const extendQuantity = Math.max(0, Number(item.extendQuantity) || 0);
@@ -892,6 +925,7 @@ export default function DepositConfirmationsPage() {
                   <TableHead className="text-xs font-medium text-center whitespace-nowrap">입금상태</TableHead>
                   <TableHead className="text-xs font-medium text-center whitespace-nowrap">매칭</TableHead>
                   <TableHead className="text-xs font-medium text-center whitespace-nowrap">매칭고객명</TableHead>
+                  <TableHead className="text-xs font-medium text-center whitespace-nowrap">{"\uBD80\uAC00\uC138"}</TableHead>
                   <TableHead className="text-xs font-medium text-center whitespace-nowrap">비고</TableHead>
                   <TableHead className="text-xs font-medium text-center whitespace-nowrap">작업</TableHead>
                 </TableRow>
@@ -900,14 +934,14 @@ export default function DepositConfirmationsPage() {
                 {isLoading ? (
                   Array.from({ length: 5 }).map((_, i) => (
                     <TableRow key={i}>
-                      {Array.from({ length: 10 }).map((_, j) => (
+                      {Array.from({ length: 11 }).map((_, j) => (
                         <TableCell key={j}><Skeleton className="h-4 w-16" /></TableCell>
                       ))}
                     </TableRow>
                   ))
                 ) : paginatedDeposits.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={10} className="p-12 text-center text-muted-foreground">
+                    <TableCell colSpan={11} className="p-12 text-center text-muted-foreground">
                       등록된 입금 내역이 없습니다. 엑셀 파일을 업로드하세요.
                     </TableCell>
                   </TableRow>
@@ -915,6 +949,7 @@ export default function DepositConfirmationsPage() {
                   paginatedDeposits.map((deposit) => {
                     const isConfirmed = !!deposit.confirmedAt;
                     const matchedContract = allContractsData.find(c => c.id === deposit.contractId);
+                    const contractVatDisplay = getContractVatDisplay(matchedContract);
                     const totalContract = getResolvedDepositContractAmount(deposit, matchedContract);
                     const depositAmount = Number(deposit.depositAmount) || 0;
                     const shortfallAmount = Math.max(totalContract - depositAmount, 0);
@@ -969,6 +1004,15 @@ export default function DepositConfirmationsPage() {
                         </TableCell>
                         <TableCell className="text-xs whitespace-nowrap text-center">
                           {isConfirmed && matchedContract ? matchedContract.customerName : "-"}
+                        </TableCell>
+                        <TableCell className="text-xs whitespace-nowrap text-center">
+                          {matchedContract ? (
+                            <Badge variant="outline" className={`rounded-none text-xs ${getVatBadgeClassName(contractVatDisplay)}`}>
+                              {contractVatDisplay}
+                            </Badge>
+                          ) : (
+                            <span className="text-muted-foreground">-</span>
+                          )}
                         </TableCell>
                         <TableCell className="text-xs whitespace-nowrap text-center">
                           {deposit.notes ? (
