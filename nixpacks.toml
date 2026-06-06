@@ -1,5 +1,6 @@
 [variables]
-NIXPACKS_METADATA = "node"
+NIXPACKS_METADATA = "nodejs"
+NIXPACKS_RUNTIME = "nodejs"
 
 providers = ["node"]
 
