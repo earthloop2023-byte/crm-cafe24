@@ -494,6 +494,10 @@ function listenOnPort(server: ReturnType<typeof createServer>, listenPort: numbe
 }
 
 listenOnPort(httpServer, port);
-if (!process.env.PORT && port !== 8080) {
-  listenOnPort(createServer(app), 8080, "fallback");
+if (!process.env.PORT) {
+  for (const fallbackPort of [5000, 8000, 8080]) {
+    if (fallbackPort !== port) {
+      listenOnPort(createServer(app), fallbackPort, "fallback");
+    }
+  }
 }
