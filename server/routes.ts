@@ -645,6 +645,12 @@ function normalizeDuplicatePhone(value: unknown) {
   return String(value ?? "").replace(/\D/g, "");
 }
 
+const EMPTY_PHONE_PLACEHOLDER = "01000000000";
+
+function isEmptyPhonePlaceholder(value: unknown) {
+  return normalizeDuplicatePhone(value) === EMPTY_PHONE_PLACEHOLDER;
+}
+
 async function findLeadCustomerDuplicate(
   payload: { name?: unknown; phone?: unknown },
   excludeCustomerId?: string | null,
@@ -658,7 +664,12 @@ async function findLeadCustomerDuplicate(
     if (excludeCustomerId && String(customer.id) === String(excludeCustomerId)) return false;
     const existingNameKey = normalizeDuplicateName(customer.name);
     const existingPhoneKey = normalizeDuplicatePhone(customer.phone);
-    const hasSamePhone = !!phoneKey && !!existingPhoneKey && existingPhoneKey === phoneKey;
+    const hasSamePhone =
+      !!phoneKey &&
+      !isEmptyPhonePlaceholder(phoneKey) &&
+      !!existingPhoneKey &&
+      !isEmptyPhonePlaceholder(existingPhoneKey) &&
+      existingPhoneKey === phoneKey;
     const hasSameName = !!nameKey && !!existingNameKey && existingNameKey === nameKey;
     return hasSamePhone || (!phoneKey && hasSameName) || (hasSameName && !!existingPhoneKey && existingPhoneKey === phoneKey);
   }) || null;
@@ -723,10 +734,17 @@ function sanitizeFinancialContractRow(row: Record<string, any>, role?: string | 
   return sanitized;
 }
 
-async function convertCustomerToCompany(customerId: string) {
-  return storage.updateCustomer(customerId, {
+async function convertCustomerToCompany(customerId: string, convertedByName?: string | null) {
+  const updatePayload: Record<string, unknown> = {
     lifecycleStage: "customer",
     customerType: "계약완료",
+  };
+  const normalizedConvertedByName = normalizeText(convertedByName);
+  if (normalizedConvertedByName) {
+    updatePayload.managerName = normalizedConvertedByName;
+  }
+  return storage.updateCustomer(customerId, {
+    ...updatePayload,
   } as any);
 }
 
@@ -3536,6 +3554,9 @@ export async function registerRoutes(
       if (!parsed.success) {
         return res.status(400).json({ error: "Invalid customer data", details: parsed.error });
       }
+      if (isCustomerLifecycleStage(parsed.data.lifecycleStage, "lead") && normalizeDuplicatePhone(parsed.data.phone).length === 0) {
+        return res.status(400).json({ error: "리드 등록 시 전화번호는 필수입니다. 번호가 없으면 010-0000-0000을 입력하세요." });
+      }
       const duplicate = await findLeadCustomerDuplicate(parsed.data);
       if (duplicate) {
         return res.status(409).json({ error: duplicateLeadCustomerMessage(duplicate) });
@@ -3667,7 +3688,7 @@ export async function registerRoutes(
         return res.json(beforeCustomer);
       }
 
-      const customer = await convertCustomerToCompany(req.params.id);
+      const customer = await convertCustomerToCompany(req.params.id, currentUser?.name || await getCurrentUserName(req));
       if (!customer) {
         return res.status(404).json({ error: "Customer not found" });
       }
@@ -3676,10 +3697,12 @@ export async function registerRoutes(
         before_data: JSON.stringify({
           lifecycleStage: beforeCustomer.lifecycleStage,
           customerType: beforeCustomer.customerType,
+          managerName: beforeCustomer.managerName,
         }),
         after_data: JSON.stringify({
           lifecycleStage: customer.lifecycleStage,
           customerType: customer.customerType,
+          managerName: customer.managerName,
         }),
       });
 
@@ -3692,7 +3715,7 @@ export async function registerRoutes(
         [
           req.params.id,
           "convert_to_company",
-          "lifecycleStage,customerType",
+          "lifecycleStage,customerType,managerName",
           encryptedChangeHistory.before_data,
           encryptedChangeHistory.after_data,
           await getCurrentUserName(req),

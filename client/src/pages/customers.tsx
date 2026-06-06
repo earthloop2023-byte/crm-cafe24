@@ -154,6 +154,7 @@ const SELECT_NONE_VALUE = "__NONE__";
 const ADMIN_ROLES = ["대표이사", "총괄이사", "개발자"];
 const LEAD_TYPE_DEFAULT = "가망";
 const LEAD_CATEGORY_DEFAULT = "일반고객";
+const EMPTY_PHONE_PLACEHOLDER = "01000000000";
 
 function normalizeLeadCategory(value?: string | null): string {
   const trimmed = (value ?? "").trim();
@@ -174,6 +175,10 @@ function normalizeDuplicatePhone(value: unknown): string {
   return String(value ?? "").replace(/\D/g, "");
 }
 
+function isEmptyPhonePlaceholder(value: unknown): boolean {
+  return normalizeDuplicatePhone(value) === EMPTY_PHONE_PLACEHOLDER;
+}
+
 function findDuplicateCustomer(
   customers: Customer[],
   payload: { name?: unknown; phone?: unknown },
@@ -187,7 +192,12 @@ function findDuplicateCustomer(
     if (excludeCustomerId && customer.id === excludeCustomerId) return false;
     const existingNameKey = normalizeDuplicateName(customer.name);
     const existingPhoneKey = normalizeDuplicatePhone(customer.phone);
-    const samePhone = !!phoneKey && !!existingPhoneKey && phoneKey === existingPhoneKey;
+    const samePhone =
+      !!phoneKey &&
+      !isEmptyPhonePlaceholder(phoneKey) &&
+      !!existingPhoneKey &&
+      !isEmptyPhonePlaceholder(existingPhoneKey) &&
+      phoneKey === existingPhoneKey;
     const sameName = !!nameKey && !!existingNameKey && nameKey === existingNameKey;
     return samePhone || (!phoneKey && sameName) || (sameName && !!existingPhoneKey && existingPhoneKey === phoneKey);
   });
@@ -748,7 +758,7 @@ export default function CustomersPage({ mode = "lead" }: { mode?: CustomerPageMo
               {!isLeadMode ? <TableHead className="whitespace-nowrap text-right text-xs">총 환불 금액</TableHead> : null}
               {isLeadMode ? <TableHead className="whitespace-nowrap text-right text-xs">상담 건수</TableHead> : null}
               <TableHead className="text-xs">마지막 상담 이력</TableHead>
-              <TableHead className="whitespace-nowrap text-xs">등록자</TableHead>
+              <TableHead className="whitespace-nowrap text-xs">{isLeadMode ? "등록자" : "담당자"}</TableHead>
               <SortableHeader field="createdAt">등록시간</SortableHeader>
               {isLeadMode ? <TableHead className="whitespace-nowrap text-right text-xs">관리</TableHead> : null}
             </TableRow>
@@ -797,7 +807,7 @@ export default function CustomersPage({ mode = "lead" }: { mode?: CustomerPageMo
                       </span>
                     ) : "-"}
                   </TableCell>
-                  <TableCell className="text-xs whitespace-nowrap">{customer.createdByName || "-"}</TableCell>
+                  <TableCell className="text-xs whitespace-nowrap">{isLeadMode ? customer.createdByName || "-" : customer.managerName || "-"}</TableCell>
                   <TableCell className="text-xs whitespace-nowrap">{formatDateTime(customer.createdAt)}</TableCell>
                   {isLeadMode ? (
                     <TableCell className="text-right">
@@ -1093,6 +1103,10 @@ function CustomerDetailDialog({
 
   const saveCustomerMutation = useMutation({
     mutationFn: async (data: CustomerFormData) => {
+      if (isLeadMode && !isEditMode && normalizeDuplicatePhone(data.phone).length === 0) {
+        throw new Error("리드 등록 시 전화번호는 필수입니다. 번호가 없으면 010-0000-0000을 입력하세요.");
+      }
+
       const payload = {
         name: data.name.trim(),
         email: normalizeOptional(data.email),
@@ -1125,6 +1139,7 @@ function CustomerDetailDialog({
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ["/api/customers"] });
       queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/sales-analytics"] });
       queryClient.invalidateQueries({ queryKey: ["/api/contracts"] });
       queryClient.invalidateQueries({ queryKey: ["/api/contracts/paged"] });
       queryClient.invalidateQueries({ queryKey: ["/api/contracts-with-financials"] });
@@ -1318,8 +1333,8 @@ function CustomerDetailDialog({
             {isEditMode ? (
               <div className="grid gap-2 border border-border bg-muted/20 p-3 text-xs text-muted-foreground sm:grid-cols-2">
                 <div>
-                  <span className="font-medium text-foreground">등록자</span>
-                  <span className="ml-2">{customer?.createdByName || "-"}</span>
+                  <span className="font-medium text-foreground">{isLeadMode ? "등록자" : "담당자"}</span>
+                  <span className="ml-2">{isLeadMode ? customer?.createdByName || "-" : customer?.managerName || "-"}</span>
                 </div>
                 <div>
                   <span className="font-medium text-foreground">등록시간</span>
@@ -1355,14 +1370,15 @@ function CustomerDetailDialog({
                     name="managerName"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>담당자</FormLabel>
+                        <FormLabel>{isLeadMode ? "등록자" : "담당자"}</FormLabel>
                         <Select
                           onValueChange={(value) => field.onChange(value === SELECT_NONE_VALUE ? "" : value)}
                           value={field.value && field.value.length > 0 ? field.value : SELECT_NONE_VALUE}
+                          disabled={isLeadMode}
                         >
                           <FormControl>
                             <SelectTrigger className="rounded-none" data-testid="select-customer-manager">
-                              <SelectValue placeholder="담당자 선택" />
+                              <SelectValue placeholder={isLeadMode ? "등록자 선택" : "담당자 선택"} />
                             </SelectTrigger>
                           </FormControl>
                           <SelectContent className="rounded-none">
@@ -1384,7 +1400,12 @@ function CustomerDetailDialog({
                     name="phone"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>전화번호</FormLabel>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <FormLabel>전화번호{isLeadMode && !isEditMode ? " *" : ""}</FormLabel>
+                          <span className="text-[11px] text-muted-foreground">
+                            번호가 없으면 010-0000-0000 입력, 이 번호는 중복 허용
+                          </span>
+                        </div>
                         <FormControl>
                           <Input
                             {...field}

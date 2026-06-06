@@ -402,20 +402,13 @@ export default function SalesAnalyticsPage() {
   const productByName = useMemo(() => buildProductMap(products), [products]);
 
   const managerOptions = useMemo(() => {
-    const counselorNames = new Set(
+    const names = new Set(
       users
-        .filter((user) => String(user.role || "").trim() === "상담원")
         .map((user) => String(user.name || "").trim())
         .filter(Boolean),
     );
-    const names = new Set<string>();
-    for (const contract of contracts) {
-      const manager = String(contract.managerName || contract.manager || "").trim();
-      if (!manager || counselorNames.has(manager)) continue;
-      names.add(manager);
-    }
     return Array.from(names).sort((a, b) => a.localeCompare(b, "ko"));
-  }, [contracts, users]);
+  }, [users]);
 
   const filteredContracts = useMemo(() => {
     const keyword = searchTerm.trim().toLowerCase();
