@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "set NODE_ENV=development&& tsx server/index.ts",
-    "build": "vite build && esbuild ./server/index.ts --platform=node --packages=external --bundle --format=esm --outfile=dist/index.js --alias:@shared=./shared",
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && vite build && esbuild ./server/index.ts --platform=node --packages=external --bundle --format=esm --outfile=dist/index.js --alias:@shared=./shared",
     "start": "node scripts/cafe24-start.mjs",
     "check": "tsc",
     "db:push": "drizzle-kit push",
