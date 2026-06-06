@@ -503,6 +503,62 @@ async function writeSystemLog(
   }
 }
 
+async function writeEntityAuditLog(
+  req: Request,
+  entity: "customer" | "product" | "contract",
+  operation: "update" | "delete",
+  label: string,
+  details?: string | null,
+): Promise<void> {
+  const entityLabel = {
+    customer: "고객",
+    product: "상품",
+    contract: "계약",
+  }[entity];
+  const operationLabel = operation === "update" ? "수정" : "삭제";
+
+  await writeSystemLog(req, {
+    actionType: `${entity}_${operation}`,
+    action: `${entityLabel} ${operationLabel}: ${label || "-"}`,
+    details: details || null,
+  });
+}
+
+async function getContractCountByCustomerId(customerId: string): Promise<number> {
+  const result = await pool.query(
+    `SELECT COUNT(*)::int AS count FROM contracts WHERE customer_id = $1`,
+    [customerId],
+  );
+  return Number(result.rows[0]?.count || 0);
+}
+
+async function getContractCountByProductReference(productId: string, productName: string): Promise<number> {
+  const result = await pool.query(
+    `
+      WITH product_names AS (
+        SELECT $2::text AS name
+        UNION
+        SELECT product_name AS name
+        FROM product_rate_histories
+        WHERE product_id = $1
+      )
+      SELECT COUNT(*)::int AS count
+      FROM contracts
+      WHERE EXISTS (
+        SELECT 1
+        FROM product_names
+        WHERE name IS NOT NULL
+          AND BTRIM(name) <> ''
+          AND POSITION(
+            LOWER(BTRIM(name)) IN LOWER(COALESCE(products, '') || ' ' || COALESCE(product_details_json, ''))
+          ) > 0
+      )
+    `,
+    [productId, productName],
+  );
+  return Number(result.rows[0]?.count || 0);
+}
+
 const BACKUP_MAX_BYTES = 200 * 1024 * 1024;
 const BACKUP_ADVISORY_LOCK_KEY = 9020601;
 const BACKUP_RETENTION_SETTING_KEY = "backup_retention_count";
@@ -3325,6 +3381,13 @@ export async function registerRoutes(
           ],
         );
       }
+      await writeEntityAuditLog(
+        req,
+        "customer",
+        "update",
+        customer.name || req.params.id,
+        `customerId=${req.params.id}, fields=${Object.keys(parsed.data).join(",") || "-"}`,
+      );
       res.json(customer);
     } catch (error) {
       console.error("Error updating customer:", error);
@@ -3334,7 +3397,26 @@ export async function registerRoutes(
 
   app.delete("/api/customers/:id", async (req, res) => {
     try {
+      const customer = await storage.getCustomer(req.params.id);
+      if (!customer) {
+        return res.status(404).json({ error: "Customer not found" });
+      }
+      const contractCount = await getContractCountByCustomerId(req.params.id);
+      if (contractCount > 0) {
+        return res.status(409).json({
+          error: "계약이 연결된 고객은 삭제할 수 없습니다. 먼저 연결된 계약을 정리해주세요.",
+          contractCount,
+        });
+      }
+
       await storage.deleteCustomer(req.params.id);
+      await writeEntityAuditLog(
+        req,
+        "customer",
+        "delete",
+        customer.name || req.params.id,
+        `customerId=${req.params.id}`,
+      );
       res.status(204).send();
     } catch (error) {
       console.error("Error deleting customer:", error);
@@ -4443,6 +4525,14 @@ export async function registerRoutes(
         });
       }
 
+      await writeEntityAuditLog(
+        req,
+        "product",
+        "update",
+        product.name || req.params.id,
+        `productId=${req.params.id}, fields=${Object.keys(parsed.data).join(",") || "-"}`,
+      );
+
       res.json(product);
     } catch (error) {
       console.error("Error updating product:", error);
@@ -4452,7 +4542,26 @@ export async function registerRoutes(
 
   app.delete("/api/products/:id", async (req, res) => {
     try {
+      const product = await storage.getProduct(req.params.id);
+      if (!product) {
+        return res.status(404).json({ error: "Product not found" });
+      }
+      const contractCount = await getContractCountByProductReference(product.id, product.name);
+      if (contractCount > 0) {
+        return res.status(409).json({
+          error: "계약에 연결된 상품은 삭제할 수 없습니다. 먼저 연결된 계약을 정리해주세요.",
+          contractCount,
+        });
+      }
+
       await storage.deleteProduct(req.params.id);
+      await writeEntityAuditLog(
+        req,
+        "product",
+        "delete",
+        product.name || req.params.id,
+        `productId=${req.params.id}`,
+      );
       res.status(204).send();
     } catch (error) {
       console.error("Error deleting product:", error);
@@ -4827,6 +4936,13 @@ export async function registerRoutes(
       }
 
       await storage.deleteContract(contractId);
+      await writeEntityAuditLog(
+        req,
+        "contract",
+        "delete",
+        contract.contractNumber || contractId,
+        `contractId=${contractId}, customerId=${contract.customerId || "-"}, products=${contract.products || "-"}`,
+      );
       res.status(204).send();
     } catch (error) {
       console.error("Error deleting contract:", error);

@@ -1210,8 +1210,9 @@ function CustomerDetailDialog({
                           </FormControl>
                           <SelectContent className="rounded-none">
                             <SelectItem value={SELECT_NONE_VALUE}>선택 안함</SelectItem>
-                            <SelectItem value="블로그">블로그</SelectItem>
+                            <SelectItem value="슬롯">슬롯</SelectItem>
                             <SelectItem value="바이럴">바이럴</SelectItem>
+                            <SelectItem value="종합마케팅">종합마케팅</SelectItem>
                             <SelectItem value="복합상품">복합상품</SelectItem>
                             <SelectItem value="기타">기타</SelectItem>
                           </SelectContent>
