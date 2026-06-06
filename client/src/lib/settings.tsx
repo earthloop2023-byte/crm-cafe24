@@ -105,7 +105,7 @@ function parseDisplayDate(date: Date | string): Date {
     return new Date(trimmed);
   }
   const normalized = trimmed.includes("T") ? trimmed : trimmed.replace(" ", "T");
-  return new Date(`${normalized}Z`);
+  return new Date(`${normalized}+09:00`);
 }
 
 export function SettingsProvider({ children }: { children: React.ReactNode }) {
