@@ -621,16 +621,15 @@ export type ImportMapping = typeof importMappings.$inferSelect;
 
 export const allPages = [
   { key: "sales_analytics", label: "매출분석", path: "/analytics/sales" },
-  { key: "deals", label: "고객DB", path: "/deals" },
-  { key: "activities", label: "활동관리", path: "/activities" },
-  { key: "timeline", label: "타임라인", path: "/timeline" },
+  { key: "leads", label: "리드", path: "/leads" },
+  { key: "customer_companies", label: "고객사", path: "/customer-companies" },
+  { key: "customers", label: "리드/고객사", path: "/leads" },
   { key: "contracts", label: "계약관리", path: "/contracts" },
-  { key: "refunds", label: "환불관리", path: "/refunds" },
+  { key: "products", label: "상품관리", path: "/products" },
   { key: "payments", label: "매출관리", path: "/payments" },
+  { key: "refunds", label: "환불관리", path: "/refunds" },
   { key: "receivables", label: "미수금관리", path: "/receivables" },
   { key: "deposit_confirmations", label: "입금확인", path: "/deposit-confirmations" },
-  { key: "customers", label: "리드/고객사", path: "/leads" },
-  { key: "products", label: "상품", path: "/products" },
   { key: "notice", label: "공지사항", path: "/notice" },
   { key: "users", label: "사용자관리", path: "/settings/users" },
   { key: "system_logs", label: "시스템로그", path: "/settings/logs" },
@@ -639,7 +638,50 @@ export const allPages = [
   { key: "backup", label: "백업관리", path: "/settings/backup" },
 ] as const;
 
+export const positionOptions = ["대표", "이사", "실장", "팀장", "매니저", "상담원"] as const;
+export type PositionOption = typeof positionOptions[number];
+
+export const executivePositions = ["대표", "이사", "대표이사", "총괄이사", "개발자"] as const;
+export const managerPositions = ["매니저"] as const;
+export const counselorPositions = ["상담원"] as const;
+
+const leadCustomerPages = ["leads", "customer_companies", "customers"];
+const staffCommonPages = [
+  "sales_analytics",
+  ...leadCustomerPages,
+  "contracts",
+  "products",
+  "payments",
+  "refunds",
+  "receivables",
+  "deposit_confirmations",
+  "notice",
+];
+
+export const positionDefaultPages: Record<string, string[]> = {
+  "대표": allPages.map((page) => page.key).filter((key) => key !== "system_settings" && key !== "backup"),
+  "이사": allPages.map((page) => page.key).filter((key) => key !== "system_settings" && key !== "backup"),
+  "대표이사": allPages.map((page) => page.key).filter((key) => key !== "system_settings" && key !== "backup"),
+  "총괄이사": allPages.map((page) => page.key).filter((key) => key !== "system_settings" && key !== "backup"),
+  "개발자": allPages.map((page) => page.key),
+  "실장": staffCommonPages,
+  "팀장": staffCommonPages,
+  "매니저": [
+    "sales_analytics",
+    ...leadCustomerPages,
+    "contracts",
+    "refunds",
+    "receivables",
+    "deposit_confirmations",
+    "notice",
+  ],
+  "상담원": ["leads"],
+};
+
 export const departmentDefaultPages: Record<string, string[]> = {
+  "마케팅 영업팀": ["contracts", "customers", "deposit_confirmations", "products", "sales_analytics", "notice"],
+  "마케팅 기획팀": ["contracts", "customers", "deposit_confirmations", "products", "sales_analytics", "notice"],
+  "연구개발팀": allPages.map((page) => page.key),
   "마케팅팀": ["contracts", "customers", "deposit_confirmations", "products", "sales_analytics", "notice"],
   "경영지원팀": ["sales_analytics", "payments", "receivables", "deposit_confirmations", "notice"],
   "경영지원실": ["sales_analytics", "payments", "receivables", "deposit_confirmations", "notice"],

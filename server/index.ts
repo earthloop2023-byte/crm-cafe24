@@ -11,6 +11,7 @@ import { seedDatabase } from "./seed";
 import { ensureDatabasePerformanceObjects, hasDatabaseConfig, pool } from "./db";
 import { storage } from "./storage";
 import { assertPiiEncryptionReadyForProduction } from "./pii-security";
+import { applyDataMapping260606IfNeeded } from "./data-mapping-260606";
 
 const app = express();
 const httpServer = createServer(app);
@@ -418,6 +419,14 @@ async function bootstrapApplication() {
     }
   } catch (error) {
     console.error("Error seeding database:", error);
+  }
+
+  try {
+    if (hasDatabaseConfig) {
+      await applyDataMapping260606IfNeeded();
+    }
+  } catch (error) {
+    console.error("Error applying 260606 data mapping:", error);
   }
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {

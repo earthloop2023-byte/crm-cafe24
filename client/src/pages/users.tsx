@@ -38,21 +38,23 @@ import { useSettings } from "@/lib/settings";
 import { useAuth } from "@/lib/auth";
 import { usePermissions } from "@/lib/permissions";
 import { useToast } from "@/hooks/use-toast";
+import { positionOptions } from "@shared/schema";
 import type { User } from "@shared/schema";
 
-const roleOptions = ["A", "B"];
 const EXECUTIVE_DEPARTMENT = "\uACBD\uC601\uC9C4";
-const MANAGEMENT_ROLES = ["\uB300\uD45C\uC774\uC0AC", "\uCD1D\uAD04\uC774\uC0AC", "\uAC1C\uBC1C\uC790"];
-const departmentOptions = ["개발팀", "마케팅팀", "경영진", "경영지원팀"];
+const MANAGEMENT_ROLES = ["대표", "이사", "\uB300\uD45C\uC774\uC0AC", "\uCD1D\uAD04\uC774\uC0AC", "\uAC1C\uBC1C\uC790"];
+const departmentOptions = ["경영진", "경영지원팀", "마케팅 영업팀", "마케팅 기획팀", "연구개발팀"];
 const WORK_STATUS_EMPLOYED = "\uC7AC\uC9C1\uC911";
 const WORK_STATUS_ON_LEAVE = "\uD734\uC9C1\uC911";
 const WORK_STATUS_RESIGNED = "\uD1F4\uC0AC";
 const workStatusOptions = [WORK_STATUS_EMPLOYED, WORK_STATUS_ON_LEAVE, WORK_STATUS_RESIGNED] as const;
 
+type UserRoleLike = { role?: string | null; department?: string | null };
+
 const isHiddenSystemAdmin = (user: User) =>
   user.loginId?.trim().toLowerCase() === "admin" || user.id === "__local_admin__";
 
-const isExecutiveUser = (user?: User | null) =>
+const isExecutiveUser = (user?: UserRoleLike | null) =>
   !!user &&
   (MANAGEMENT_ROLES.includes(user.role || "") || String(user.department || "").trim() === EXECUTIVE_DEPARTMENT);
 
@@ -310,7 +312,7 @@ export default function Users() {
     { key: "loginId", label: "로그인ID" },
     { key: "name", label: "사용자명" },
     { key: "phone", label: "연락처" },
-    { key: "role", label: "권한" },
+    { key: "role", label: "직책" },
     { key: "department", label: "부서" },
     { key: "workStatus", label: "근무상태" },
     { key: "lastLoginAt", label: "최종로그인" },
@@ -430,15 +432,15 @@ export default function Users() {
                     name="role"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>권한</FormLabel>
+                        <FormLabel>직책</FormLabel>
                         <Select onValueChange={field.onChange} value={field.value} disabled={!canGrantPermissions}>
                           <FormControl>
                             <SelectTrigger className="rounded-none" data-testid="select-role">
-                              <SelectValue placeholder="권한 선택" />
+                              <SelectValue placeholder="직책 선택" />
                             </SelectTrigger>
                           </FormControl>
                           <SelectContent className="rounded-none">
-                            {roleOptions.map((option) => (
+                            {positionOptions.map((option) => (
                               <SelectItem key={option} value={option}>
                                 {option}
                               </SelectItem>
@@ -522,10 +524,12 @@ export default function Users() {
 
       <Card className="rounded-none border-border p-4 mb-4 bg-muted/20">
         <div className="space-y-2 text-sm">
-          <p className="font-semibold">권한 등급 A/B 기준</p>
-          <p><span className="font-semibold">A</span>: 일반 운영 등급입니다. 실제 접근 가능 메뉴는 권한설정 화면에서 체크된 페이지 권한을 우선 적용합니다.</p>
-          <p><span className="font-semibold">B</span>: 확장 운영/관리 등급입니다. A보다 높은 등급으로 분류하지만, 사용자관리에서 A/B를 부여하려면 별도로 권한설정 권한이 있어야 합니다.</p>
-          <p className="text-muted-foreground">사용자 정보 전체 수정은 경영진만 가능하며, 일반 사용자는 본인 비밀번호, 이메일, 연락처만 수정할 수 있습니다.</p>
+          <p className="font-semibold">직책 기반 기본 권한</p>
+          <p><span className="font-semibold">대표/이사</span>: 시스템설정, 백업관리를 제외한 운영 전체 권한이 기본 적용됩니다.</p>
+          <p><span className="font-semibold">실장/팀장</span>: 매출분석, 리드/고객사, 계약관리, 상품관리, 재무/회계 기본 권한이 적용됩니다.</p>
+          <p><span className="font-semibold">매니저</span>: 매출관리/설정/상품관리는 숨기고, 매출분석은 본인 계약 기준으로 제한됩니다.</p>
+          <p><span className="font-semibold">상담원</span>: 리드 등록과 리드 상담 중심으로 제한됩니다.</p>
+          <p className="text-muted-foreground">직책은 기본 템플릿이며, 실제 메뉴 접근은 권한설정 화면에서 아이디별로 조정할 수 있습니다.</p>
         </div>
       </Card>
 
@@ -713,15 +717,15 @@ export default function Users() {
                 name="role"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>권한</FormLabel>
+                    <FormLabel>직책</FormLabel>
                     <Select onValueChange={field.onChange} value={field.value} disabled={!canEditRoleField}>
                       <FormControl>
                         <SelectTrigger className="rounded-none">
-                          <SelectValue placeholder="권한 선택" />
+                          <SelectValue placeholder="직책 선택" />
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent className="rounded-none">
-                        {roleOptions.map((option) => (
+                        {positionOptions.map((option) => (
                           <SelectItem key={option} value={option}>
                             {option}
                           </SelectItem>

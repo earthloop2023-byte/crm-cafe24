@@ -149,6 +149,14 @@ const CUSTOMER_FIELD_LABELS: Record<string, string> = {
 
 const SELECT_NONE_VALUE = "__NONE__";
 const ADMIN_ROLES = ["대표이사", "총괄이사", "개발자"];
+const LEAD_TYPE_DEFAULT = "가망";
+const LEAD_CATEGORY_DEFAULT = "일반고객";
+
+function normalizeLeadCategory(value?: string | null): string {
+  const trimmed = (value ?? "").trim();
+  if (!trimmed || trimmed === "리드") return LEAD_CATEGORY_DEFAULT;
+  return trimmed;
+}
 
 function normalizeOptional(value?: string | null): string | null {
   const trimmed = (value ?? "").trim();
@@ -374,6 +382,7 @@ export default function CustomersPage({ mode = "lead" }: { mode?: CustomerPageMo
   });
   const isLeadMode = mode === "lead";
   const isAdminUser = ADMIN_ROLES.includes(currentUser?.role || "");
+  const isCounselorUser = String(currentUser?.role || "").trim() === "상담원";
   const noun = isLeadMode ? "리드" : "고객사";
   const managementTitle = isLeadMode ? "리드관리" : "고객사관리";
   const canDeleteRows = isLeadMode || isAdminUser;
@@ -561,6 +570,10 @@ export default function CustomersPage({ mode = "lead" }: { mode?: CustomerPageMo
   };
 
   const handleConvertToCompany = (customer: Customer) => {
+    if (isCounselorUser) {
+      toast({ title: "상담원은 고객사 전환을 수행할 수 없습니다.", variant: "destructive" });
+      return;
+    }
     if (!window.confirm(`${customer.name} 리드를 고객사로 전환하시겠습니까? 전환 후 리드로 되돌릴 수 없습니다.`)) return;
     convertToCompanyMutation.mutate(customer.id);
   };
@@ -709,7 +722,9 @@ export default function CustomersPage({ mode = "lead" }: { mode?: CustomerPageMo
                   </TableCell>
                   <TableCell className="text-xs">{customer.phone || "-"}</TableCell>
                   <TableCell className="text-xs">{customer.customerType || "-"}</TableCell>
-                  <TableCell className="text-xs">{customer.customerCategory || "-"}</TableCell>
+                  <TableCell className="text-xs">
+                    {isLeadMode ? normalizeLeadCategory(customer.customerCategory) : customer.customerCategory || "-"}
+                  </TableCell>
                   <TableCell className="text-right text-xs">{(customerListSummaryById.get(customer.id)?.contractCount || 0).toLocaleString("ko-KR")}건</TableCell>
                   <TableCell className="text-right text-xs">{formatCurrency(customerListSummaryById.get(customer.id)?.totalContractAmount || 0)}</TableCell>
                   <TableCell className="text-right text-xs text-red-600">{formatCurrency(customerListSummaryById.get(customer.id)?.totalRefundAmount || 0)}</TableCell>
@@ -728,7 +743,8 @@ export default function CustomersPage({ mode = "lead" }: { mode?: CustomerPageMo
                         size="sm"
                         className="h-8 rounded-none whitespace-nowrap"
                         onClick={() => handleConvertToCompany(customer)}
-                        disabled={convertToCompanyMutation.isPending}
+                        disabled={isCounselorUser || convertToCompanyMutation.isPending}
+                        title={isCounselorUser ? "상담원은 고객사 전환을 수행할 수 없습니다." : undefined}
                         data-testid={`button-convert-customer-${customer.id}`}
                       >
                         고객사 전환
@@ -816,8 +832,8 @@ function CustomerDetailDialog({
       phone: customer?.phone || "",
       company: customer?.company || "",
       status: customer?.status || "active",
-      customerType: isLeadMode ? customer?.customerType || "" : "계약완료",
-      customerCategory: customer?.customerCategory || "",
+      customerType: isLeadMode ? customer?.customerType || LEAD_TYPE_DEFAULT : "계약완료",
+      customerCategory: isLeadMode ? normalizeLeadCategory(customer?.customerCategory) : customer?.customerCategory || "",
       serviceType: customer?.serviceType || "",
       managerName: customer?.managerName || currentUser?.name || "",
       notes: customer?.notes || "",
@@ -839,8 +855,8 @@ function CustomerDetailDialog({
       phone: customer?.phone || "",
       company: customer?.company || "",
       status: customer?.status || "active",
-      customerType: isLeadMode ? customer?.customerType || "" : "계약완료",
-      customerCategory: customer?.customerCategory || "",
+      customerType: isLeadMode ? customer?.customerType || LEAD_TYPE_DEFAULT : "계약완료",
+      customerCategory: isLeadMode ? normalizeLeadCategory(customer?.customerCategory) : customer?.customerCategory || "",
       serviceType: customer?.serviceType || "",
       managerName: customer?.managerName || currentUser?.name || "",
       notes: customer?.notes || "",
@@ -993,8 +1009,10 @@ function CustomerDetailDialog({
         phone: normalizeOptional(data.phone),
         company: normalizeOptional(data.company),
         status: normalizeOptional(data.status) || "active",
-        customerType: isLeadMode ? normalizeOptional(data.customerType) : "계약완료",
-        customerCategory: normalizeOptional(data.customerCategory),
+        customerType: isLeadMode ? normalizeOptional(data.customerType) || LEAD_TYPE_DEFAULT : "계약완료",
+        customerCategory: isLeadMode
+          ? normalizeLeadCategory(data.customerCategory)
+          : normalizeOptional(data.customerCategory),
         serviceType: normalizeOptional(data.serviceType),
         managerName: normalizeOptional(data.managerName) || normalizeOptional(currentUser?.name),
         notes: normalizeOptional(data.notes),
@@ -1334,7 +1352,6 @@ function CustomerDetailDialog({
                             <SelectItem value="월보장">월보장</SelectItem>
                             <SelectItem value="바이럴">바이럴</SelectItem>
                             <SelectItem value="종합마케팅">종합마케팅</SelectItem>
-                            <SelectItem value="복합상품">복합상품</SelectItem>
                             <SelectItem value="기타">기타</SelectItem>
                           </SelectContent>
                         </Select>
@@ -1351,7 +1368,7 @@ function CustomerDetailDialog({
                         <FormLabel>{isLeadMode ? "리드구분" : "고객구분"}</FormLabel>
                         <Select
                           onValueChange={(value) => field.onChange(value === SELECT_NONE_VALUE ? "" : value)}
-                          value={isLeadMode ? field.value && field.value.length > 0 ? field.value : SELECT_NONE_VALUE : "계약완료"}
+                          value={isLeadMode ? field.value && field.value.length > 0 ? field.value : LEAD_TYPE_DEFAULT : "계약완료"}
                           disabled={!isLeadMode}
                         >
                           <FormControl>
@@ -1360,7 +1377,7 @@ function CustomerDetailDialog({
                             </SelectTrigger>
                           </FormControl>
                           <SelectContent className="rounded-none">
-                            <SelectItem value={SELECT_NONE_VALUE}>선택 안함</SelectItem>
+                            {!isLeadMode ? <SelectItem value={SELECT_NONE_VALUE}>선택 안함</SelectItem> : null}
                             <SelectItem value="가망">가망</SelectItem>
                             {!isLeadMode ? <SelectItem value="계약완료">계약완료</SelectItem> : null}
                             <SelectItem value="종료">종료</SelectItem>
@@ -1380,7 +1397,7 @@ function CustomerDetailDialog({
                         <FormLabel>{isLeadMode ? "리드유형" : "고객유형"}</FormLabel>
                         <Select
                           onValueChange={(value) => field.onChange(value === SELECT_NONE_VALUE ? "" : value)}
-                          value={field.value && field.value.length > 0 ? field.value : SELECT_NONE_VALUE}
+                          value={isLeadMode ? normalizeLeadCategory(field.value) : field.value && field.value.length > 0 ? field.value : SELECT_NONE_VALUE}
                         >
                           <FormControl>
                             <SelectTrigger className="rounded-none" data-testid="select-customer-category">
@@ -1389,7 +1406,7 @@ function CustomerDetailDialog({
                           </FormControl>
                           <SelectContent className="rounded-none">
                             <SelectItem value={SELECT_NONE_VALUE}>선택 안함</SelectItem>
-                            <SelectItem value={isLeadMode ? "리드" : "고객사"}>{isLeadMode ? "리드" : "고객사"}</SelectItem>
+                            <SelectItem value={isLeadMode ? LEAD_CATEGORY_DEFAULT : "고객사"}>{isLeadMode ? LEAD_CATEGORY_DEFAULT : "고객사"}</SelectItem>
                             <SelectItem value="대행사">대행사</SelectItem>
                             <SelectItem value="총판">총판</SelectItem>
                             <SelectItem value="실행사">실행사</SelectItem>

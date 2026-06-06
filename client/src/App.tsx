@@ -91,7 +91,7 @@ function Router() {
       <Route path="/settings/users">{() => <ProtectedRoute path="/settings/users" component={UsersPage} />}</Route>
       <Route path="/settings/logs">{() => <ProtectedRoute path="/settings/logs" component={SystemLogsPage} />}</Route>
       <Route path="/settings/permissions">{() => <ProtectedRoute path="/settings/permissions" component={PermissionsPage} />}</Route>
-      <Route path="/settings/system">{() => <ProtectedRoute path="/settings/system" component={SystemSettingsPage} />}</Route>
+      <Route path="/settings/system">{() => <DeveloperRoute component={SystemSettingsPage} />}</Route>
       <Route path="/products">{() => <ProtectedRoute path="/products" component={ProductsPage} />}</Route>
       <Route path="/contracts">{() => <ProtectedRoute path="/contracts" component={ContractsPage} />}</Route>
       <Route path="/receivables">{() => <ProtectedRoute path="/receivables" component={ReceivablesPage} />}</Route>

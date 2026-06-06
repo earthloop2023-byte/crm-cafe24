@@ -27,6 +27,7 @@ import {
   importStagingRows,
   importMappings,
   departmentDefaultPages,
+  positionDefaultPages,
   users,
   customers,
   contacts,
@@ -76,8 +77,12 @@ const EXECUTIVE_DEPARTMENTS = new Set(["\uACBD\uC601\uC9C4"]);
 const USER_PERMISSION_FIELDS = new Set(["role"]);
 const USER_SELF_EDIT_FIELDS = new Set(["password", "email", "phone"]);
 
-const PERMISSION_ADMIN_ROLES = ["대표이사", "총괄이사", "개발자"];
-const DEPOSIT_ACTION_ALLOWED_DEPARTMENTS = new Set(["경영지원팀", "개발팀"]);
+const PERMISSION_ADMIN_ROLES = ["대표", "이사", "대표이사", "총괄이사", "개발자"];
+const DEVELOPER_ROLES = new Set(["개발자"]);
+const MANAGER_POSITIONS = new Set(["매니저"]);
+const COUNSELOR_POSITIONS = new Set(["상담원"]);
+const ADMIN_ONLY_PAGE_KEYS = new Set(["system_settings", "backup"]);
+const DEPOSIT_ACTION_ALLOWED_DEPARTMENTS = new Set(["경영지원팀", "개발팀", "연구개발팀"]);
 const REGIONAL_CUSTOMER_LIST_ALLOWED_DEPARTMENTS = new Set(["타지역팀"]);
 const LOCAL_ADMIN_USER_ID = "__local_admin__";
 const localAdminUser = {
@@ -596,6 +601,78 @@ async function getContractCountByProductReference(productId: string, productName
 
 function isCustomerLifecycleStage(value: unknown, stage: "lead" | "customer") {
   return String(value || "").trim() === stage;
+}
+
+function filterAssignablePageKeys(pageKeys: string[]) {
+  return Array.from(new Set(pageKeys.filter((pageKey) => !ADMIN_ONLY_PAGE_KEYS.has(pageKey))));
+}
+
+function normalizeLeadCustomerPayload(body: Record<string, any>) {
+  if (body.lifecycleStage !== "lead") return body;
+  if (!String(body.customerType || "").trim()) {
+    body.customerType = "가망";
+  }
+  const category = String(body.customerCategory || "").trim();
+  if (!category || category === "리드") {
+    body.customerCategory = "일반고객";
+  }
+  if (String(body.serviceType || "").trim() === "복합상품") {
+    body.serviceType = null;
+  }
+  return body;
+}
+
+async function getSessionUser(req: Request) {
+  return req.session.userId ? await storage.getUser(req.session.userId) : null;
+}
+
+function normalizeRoleName(role?: string | null) {
+  return String(role || "").trim();
+}
+
+function isManagerPosition(role?: string | null) {
+  return MANAGER_POSITIONS.has(normalizeRoleName(role));
+}
+
+function isCounselorPosition(role?: string | null) {
+  return COUNSELOR_POSITIONS.has(normalizeRoleName(role));
+}
+
+function canViewSensitiveFinancialFields(role?: string | null) {
+  return !isManagerPosition(role) && !isCounselorPosition(role);
+}
+
+function isOwnManagedRecord(
+  currentUser: { id?: string | null; name?: string | null },
+  record: { managerId?: string | null; managerName?: string | null },
+) {
+  const userId = normalizeText(currentUser.id);
+  const userName = normalizeText(currentUser.name);
+  return (
+    (!!userId && normalizeText(record.managerId) === userId) ||
+    (!!userName && normalizeText(record.managerName) === userName)
+  );
+}
+
+function sanitizeFinancialContractRow(row: Record<string, any>, role?: string | null) {
+  if (canViewSensitiveFinancialFields(role)) return row;
+  const sanitized = { ...row };
+  sanitized.workCost = null;
+  if (typeof sanitized.productDetailsJson === "string" && sanitized.productDetailsJson.trim()) {
+    try {
+      const details = JSON.parse(sanitized.productDetailsJson);
+      if (Array.isArray(details)) {
+        sanitized.productDetailsJson = JSON.stringify(details.map((item) => ({
+          ...item,
+          workCost: null,
+          marginAmount: null,
+        })));
+      }
+    } catch {
+      sanitized.productDetailsJson = null;
+    }
+  }
+  return sanitized;
 }
 
 async function convertCustomerToCompany(customerId: string) {
@@ -2998,10 +3075,10 @@ export async function registerRoutes(
       }
       parsed.data.password = await bcrypt.hash(parsed.data.password, 10);
       const user = await storage.createUser(parsed.data);
-      const dept = parsed.data.department;
       const role = parsed.data.role;
-      if (dept && !isPermissionAdminRole(role) && departmentDefaultPages[dept]) {
-        await storage.setPagePermissions(user.id, departmentDefaultPages[dept]);
+      const defaultPages = role ? filterAssignablePageKeys(positionDefaultPages[role] ?? []) : [];
+      if (defaultPages.length > 0) {
+        await storage.setPagePermissions(user.id, defaultPages);
       }
       const { password: _p, ...safeUser } = user;
       res.status(201).json(safeUser);
@@ -3047,7 +3124,7 @@ export async function registerRoutes(
       }
 
       if (requestedFields.some((field) => USER_PERMISSION_FIELDS.has(field)) && !canGrantPermissions) {
-        return res.status(403).json({ error: "권한설정 권한이 있는 사용자만 A/B 권한 등급을 부여할 수 있습니다." });
+        return res.status(403).json({ error: "권한설정 권한이 있는 사용자만 직책을 변경할 수 있습니다." });
       }
       if (parsed.data.password) {
         const passwordPolicy = await getPasswordPolicy();
@@ -3061,10 +3138,9 @@ export async function registerRoutes(
       if (!user) {
         return res.status(404).json({ error: "User not found" });
       }
-      if (parsed.data.department && parsed.data.department !== oldUser?.department &&
-          !isPermissionAdminRole(user.role) &&
-          departmentDefaultPages[parsed.data.department]) {
-        await storage.setPagePermissions(user.id, departmentDefaultPages[parsed.data.department]);
+      if (parsed.data.role && parsed.data.role !== oldUser?.role) {
+        const defaultPages = filterAssignablePageKeys(positionDefaultPages[parsed.data.role] ?? []);
+        await storage.setPagePermissions(user.id, defaultPages);
       }
       const { password: _pw, ...safeUpdated } = user;
       res.json(safeUpdated);
@@ -3313,9 +3389,13 @@ export async function registerRoutes(
     limits: { fileSize: 20 * 1024 * 1024 },
   });
 
-  app.get("/api/customers", async (_req, res) => {
+  app.get("/api/customers", async (req, res) => {
     try {
-      const customers = await storage.getCustomers();
+      const currentUser = req.session.userId ? await storage.getUser(req.session.userId) : null;
+      const rawCustomers = await storage.getCustomers();
+      const customers = isCounselorPosition(currentUser?.role)
+        ? rawCustomers.filter((customer) => isCustomerLifecycleStage(customer.lifecycleStage, "lead"))
+        : rawCustomers;
       if (customers.length === 0) {
         res.json(customers);
         return;
@@ -3362,9 +3442,13 @@ export async function registerRoutes(
 
   app.get("/api/customers/:id", async (req, res) => {
     try {
+      const currentUser = req.session.userId ? await storage.getUser(req.session.userId) : null;
       const customer = await storage.getCustomer(req.params.id);
       if (!customer) {
         return res.status(404).json({ error: "Customer not found" });
+      }
+      if (isCounselorPosition(currentUser?.role) && !isCustomerLifecycleStage(customer.lifecycleStage, "lead")) {
+        return res.status(403).json({ error: "상담원은 리드 정보만 조회할 수 있습니다." });
       }
       res.json(customer);
     } catch (error) {
@@ -3375,11 +3459,17 @@ export async function registerRoutes(
 
   app.post("/api/customers", async (req, res) => {
     try {
+      const currentUser = await getSessionUser(req);
       const body = { ...(req.body ?? {}) };
-      body.lifecycleStage = body.lifecycleStage === "lead" ? "lead" : "customer";
+      body.lifecycleStage = isCounselorPosition(currentUser?.role)
+        ? "lead"
+        : body.lifecycleStage === "lead"
+          ? "lead"
+          : "customer";
       if (body.lifecycleStage === "customer") {
         body.customerType = "계약완료";
       }
+      normalizeLeadCustomerPayload(body);
       const parsed = insertCustomerSchema.safeParse(body);
       if (!parsed.success) {
         return res.status(400).json({ error: "Invalid customer data", details: parsed.error });
@@ -3398,6 +3488,7 @@ export async function registerRoutes(
       if (body.lifecycleStage === "customer") {
         body.customerType = "계약완료";
       }
+      normalizeLeadCustomerPayload(body);
       const parsed = insertCustomerSchema.partial().safeParse(body);
       if (!parsed.success) {
         return res.status(400).json({ error: "Invalid customer data", details: parsed.error });
@@ -3406,7 +3497,15 @@ export async function registerRoutes(
       if (!beforeCustomer) {
         return res.status(404).json({ error: "Customer not found" });
       }
-      const currentUser = req.session.userId ? await storage.getUser(req.session.userId) : null;
+      const currentUser = await getSessionUser(req);
+      if (isCounselorPosition(currentUser?.role)) {
+        if (!isCustomerLifecycleStage(beforeCustomer.lifecycleStage, "lead")) {
+          return res.status(403).json({ error: "상담원은 리드 정보만 수정할 수 있습니다." });
+        }
+        if (parsed.data.lifecycleStage === "customer") {
+          return res.status(403).json({ error: "상담원은 고객사 전환을 수행할 수 없습니다." });
+        }
+      }
       const isAdminUser = isPermissionAdminRole(currentUser?.role);
       const isCompanyCustomer = isCustomerLifecycleStage(beforeCustomer.lifecycleStage, "customer");
       const requestedName = typeof parsed.data.name === "string" ? parsed.data.name.trim() : undefined;
@@ -3477,6 +3576,10 @@ export async function registerRoutes(
 
   app.post("/api/customers/:id/convert-to-company", async (req, res) => {
     try {
+      const currentUser = await getSessionUser(req);
+      if (isCounselorPosition(currentUser?.role)) {
+        return res.status(403).json({ error: "상담원은 고객사 전환을 수행할 수 없습니다." });
+      }
       const beforeCustomer = await storage.getCustomer(req.params.id);
       if (!beforeCustomer) {
         return res.status(404).json({ error: "Customer not found" });
@@ -3538,7 +3641,10 @@ export async function registerRoutes(
       if (!customer) {
         return res.status(404).json({ error: "Customer not found" });
       }
-      const currentUser = req.session.userId ? await storage.getUser(req.session.userId) : null;
+      const currentUser = await getSessionUser(req);
+      if (isCounselorPosition(currentUser?.role)) {
+        return res.status(403).json({ error: "상담원은 리드와 고객사를 삭제할 수 없습니다." });
+      }
       if (isCustomerLifecycleStage(customer.lifecycleStage, "customer") && !isPermissionAdminRole(currentUser?.role)) {
         return res.status(403).json({ error: "고객사는 관리자만 삭제할 수 있습니다." });
       }
@@ -3567,6 +3673,13 @@ export async function registerRoutes(
 
   app.get("/api/customers/:id/counselings", async (req, res) => {
     try {
+      const currentUser = await getSessionUser(req);
+      if (isCounselorPosition(currentUser?.role)) {
+        const customer = await storage.getCustomer(String(req.params.id));
+        if (!customer || !isCustomerLifecycleStage(customer.lifecycleStage, "lead")) {
+          return res.status(403).json({ error: "상담원은 리드 상담만 조회할 수 있습니다." });
+        }
+      }
       const result = await pool.query(
         `
           SELECT id, customer_id AS "customerId", counseling_date AS "counselingDate",
@@ -3600,6 +3713,13 @@ export async function registerRoutes(
       if (Number.isNaN(parsedDate.getTime())) {
         return res.status(400).json({ error: "Invalid counseling date" });
       }
+      const currentUser = await getSessionUser(req);
+      if (isCounselorPosition(currentUser?.role)) {
+        const customer = await storage.getCustomer(String(req.params.id));
+        if (!customer || !isCustomerLifecycleStage(customer.lifecycleStage, "lead")) {
+          return res.status(403).json({ error: "상담원은 리드 상담만 등록할 수 있습니다." });
+        }
+      }
 
       const inserted = await pool.query(
         `
@@ -3624,6 +3744,10 @@ export async function registerRoutes(
 
   app.delete("/api/customers/:id/counselings/:counselingId", autoLoginDev, requireAuth, async (req, res) => {
     try {
+      const currentUser = await getSessionUser(req);
+      if (isCounselorPosition(currentUser?.role)) {
+        return res.status(403).json({ error: "상담원은 상담 이력을 삭제할 수 없습니다." });
+      }
       await pool.query(
         `DELETE FROM customer_counselings WHERE id = $1 AND customer_id = $2`,
         [req.params.counselingId, req.params.id],
@@ -3637,6 +3761,10 @@ export async function registerRoutes(
 
   app.get("/api/customers/:id/change-history", async (req, res) => {
     try {
+      const currentUser = await getSessionUser(req);
+      if (isCounselorPosition(currentUser?.role)) {
+        return res.status(403).json({ error: "상담원은 변경이력을 조회할 수 없습니다." });
+      }
       const result = await pool.query(
         `
           SELECT id, customer_id AS "customerId", change_type AS "changeType",
@@ -3657,6 +3785,10 @@ export async function registerRoutes(
 
   app.get("/api/customers/:id/files", async (req, res) => {
     try {
+      const currentUser = await getSessionUser(req);
+      if (isCounselorPosition(currentUser?.role)) {
+        return res.status(403).json({ error: "상담원은 파일 정보를 조회할 수 없습니다." });
+      }
       const result = await pool.query(
         `
           SELECT id, customer_id AS "customerId", file_name AS "fileName",
@@ -3686,6 +3818,10 @@ export async function registerRoutes(
 
   app.post("/api/customers/:id/files", autoLoginDev, requireAuth, customerFileUpload.single("file"), async (req, res) => {
     try {
+      const currentUser = await getSessionUser(req);
+      if (isCounselorPosition(currentUser?.role)) {
+        return res.status(403).json({ error: "상담원은 파일을 등록할 수 없습니다." });
+      }
       if (!req.file) {
         return res.status(400).json({ error: "파일이 없습니다." });
       }
@@ -3749,6 +3885,10 @@ export async function registerRoutes(
 
   app.get("/api/customers/:id/files/:fileId/download", autoLoginDev, requireAuth, async (req, res) => {
     try {
+      const currentUser = await getSessionUser(req);
+      if (isCounselorPosition(currentUser?.role)) {
+        return res.status(403).json({ error: "상담원은 파일을 다운로드할 수 없습니다." });
+      }
       const result = await pool.query(
         `
           SELECT id, customer_id, file_name, original_file_name, mime_type, file_data
@@ -3781,6 +3921,10 @@ export async function registerRoutes(
 
   app.delete("/api/customers/:id/files/:fileId", autoLoginDev, requireAuth, async (req, res) => {
     try {
+      const currentUser = await getSessionUser(req);
+      if (isCounselorPosition(currentUser?.role)) {
+        return res.status(403).json({ error: "상담원은 파일을 삭제할 수 없습니다." });
+      }
       await pool.query(
         `DELETE FROM customer_files WHERE id = $1 AND customer_id = $2`,
         [req.params.fileId, req.params.id],
@@ -4711,6 +4855,10 @@ export async function registerRoutes(
   });
   app.get("/api/contracts/paged", async (req, res) => {
     try {
+      const currentUser = req.session.userId ? await storage.getUser(req.session.userId) : null;
+      if (isCounselorPosition(currentUser?.role)) {
+        return res.status(403).json({ error: "상담원은 계약관리에 접근할 수 없습니다." });
+      }
       const page = toPositiveInt(req.query.page as string | string[] | undefined, 1);
       const pageSize = toPositiveInt(req.query.pageSize as string | string[] | undefined, 10);
 
@@ -4727,7 +4875,9 @@ export async function registerRoutes(
         page,
         pageSize,
         search: search || undefined,
-        managerName: managerName && managerName !== "all" ? managerName : undefined,
+        managerName: isManagerPosition(currentUser?.role)
+          ? currentUser?.name || undefined
+          : managerName && managerName !== "all" ? managerName : undefined,
         customerName: customerName && customerName !== "all" ? customerName : undefined,
         productCategory: productCategory && productCategory !== "all" ? productCategory : undefined,
         paymentMethod: paymentMethod && paymentMethod !== "all" ? paymentMethod : undefined,
@@ -4738,17 +4888,27 @@ export async function registerRoutes(
         endDate,
       });
 
-      res.json(result);
+      res.json({
+        ...result,
+        items: result.items.map((item: any) => sanitizeFinancialContractRow(item, currentUser?.role)),
+      });
     } catch (error) {
       console.error("Error fetching paged contracts:", error);
       res.status(500).json({ error: "Failed to fetch contracts" });
     }
   });
 
-  app.get("/api/contracts", async (_req, res) => {
+  app.get("/api/contracts", async (req, res) => {
     try {
+      const currentUser = req.session.userId ? await storage.getUser(req.session.userId) : null;
+      if (isCounselorPosition(currentUser?.role)) {
+        return res.json([]);
+      }
       const contracts = await storage.getContracts();
-      res.json(contracts);
+      const filteredContracts = isManagerPosition(currentUser?.role)
+        ? contracts.filter((contract) => isOwnManagedRecord(currentUser!, contract))
+        : contracts;
+      res.json(filteredContracts.map((contract) => sanitizeFinancialContractRow(contract as any, currentUser?.role)));
     } catch (error) {
       console.error("Error fetching contracts:", error);
       res.status(500).json({ error: "Failed to fetch contracts" });
@@ -5105,10 +5265,17 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/contracts-with-financials", async (_req, res) => {
+  app.get("/api/contracts-with-financials", async (req, res) => {
     try {
+      const currentUser = req.session.userId ? await storage.getUser(req.session.userId) : null;
+      if (isCounselorPosition(currentUser?.role)) {
+        return res.json([]);
+      }
       const data = await storage.getContractsWithFinancials();
-      res.json(data);
+      const filteredData = isManagerPosition(currentUser?.role)
+        ? data.filter((contract) => isOwnManagedRecord(currentUser!, contract))
+        : data;
+      res.json(filteredData.map((contract) => sanitizeFinancialContractRow(contract as any, currentUser?.role)));
     } catch (error) {
       console.error("Error fetching contracts with financials:", error);
       res.status(500).json({ error: "Failed to fetch contracts with financials" });
@@ -5319,13 +5486,13 @@ export async function registerRoutes(
       }
       const currentUser = await storage.getUser(req.session.userId);
       if (!(await hasPermissionSettingsAccess(currentUser))) {
-        return res.status(403).json({ error: "권한 설정은 대표이사, 총괄이사, 개발자만 수정할 수 있습니다." });
+        return res.status(403).json({ error: "권한 설정은 대표, 이사, 개발자 또는 권한설정 권한이 있는 사용자만 수정할 수 있습니다." });
       }
       const parsed = setPermissionsSchema.safeParse(req.body);
       if (!parsed.success) {
         return res.status(400).json({ error: "Invalid permissions data", details: parsed.error });
       }
-      await storage.setPagePermissions(req.params.userId, parsed.data.pageKeys);
+      await storage.setPagePermissions(req.params.userId, filterAssignablePageKeys(parsed.data.pageKeys));
       res.json({ success: true });
     } catch (error) {
       console.error("Error setting permissions:", error);
@@ -5340,18 +5507,19 @@ export async function registerRoutes(
       }
       const currentUser = await storage.getUser(req.session.userId);
       if (!(await hasPermissionSettingsAccess(currentUser))) {
-        return res.status(403).json({ error: "권한 설정은 대표이사, 총괄이사, 개발자만 수정할 수 있습니다." });
+        return res.status(403).json({ error: "권한 설정은 대표, 이사, 개발자 또는 권한설정 권한이 있는 사용자만 수정할 수 있습니다." });
       }
       const targetUser = await storage.getUser(req.params.userId);
       if (!targetUser) {
         return res.status(404).json({ error: "사용자를 찾을 수 없습니다." });
       }
-      const dept = targetUser.department;
-      if (dept && departmentDefaultPages[dept]) {
-        await storage.setPagePermissions(targetUser.id, departmentDefaultPages[dept]);
-        res.json({ success: true, appliedPages: departmentDefaultPages[dept] });
+      const role = targetUser.role;
+      if (role && positionDefaultPages[role]) {
+        const appliedPages = filterAssignablePageKeys(positionDefaultPages[role]);
+        await storage.setPagePermissions(targetUser.id, appliedPages);
+        res.json({ success: true, appliedPages });
       } else {
-        res.status(400).json({ error: "해당 부서의 기본 권한이 설정되어 있지 않습니다." });
+        res.status(400).json({ error: "해당 직책의 기본 권한이 설정되어 있지 않습니다." });
       }
     } catch (error) {
       console.error("Error applying department defaults:", error);
@@ -5753,6 +5921,7 @@ export async function registerRoutes(
         return res.status(401).json({ error: "User not found" });
       }
       const isExecutive = PERMISSION_ADMIN_ROLES.includes(currentUser.role || "");
+      const isManager = isManagerPosition(currentUser.role);
       const managerNameValue = normalizeText(toSingleString(managerNameFilter as string | string[] | undefined));
       const customerNameValue = normalizeText(toSingleString(customerNameFilter as string | string[] | undefined));
       const productFilterValue = normalizeText(toSingleString(productFilter as string | string[] | undefined));
@@ -5926,7 +6095,9 @@ export async function registerRoutes(
 
       let filtered = contracts;
 
-      if (!isExecutive) {
+      if (isManager) {
+        filtered = filtered.filter((contract) => isOwnManagedRecord(currentUser, contract));
+      } else if (!isExecutive) {
         const userDepartment = normalizeText(currentUser.department);
         if (canApplyDepartmentSplit && (userDepartment === REGIONAL_DEPARTMENT || userDepartment === MARKETING_DEPARTMENT)) {
           filtered = filtered.filter((contract) => resolveContractDepartment(contract) === userDepartment);
@@ -5980,6 +6151,9 @@ export async function registerRoutes(
           return false;
         }
         if (managerNameValue && managerNameValue !== "all" && normalizeText(refund.managerName) !== managerNameValue) {
+          return false;
+        }
+        if (isManager && normalizeText(refund.managerName) !== normalizeText(currentUser.name)) {
           return false;
         }
         if (customerNameValue && customerNameValue !== "all" && normalizeText(refund.customerName) !== customerNameValue) {
@@ -6112,7 +6286,7 @@ export async function registerRoutes(
       };
 
       const excludeRoles = ["대표이사", "총괄이사", "개발자"];
-      const excludeDepartments = ["경영진", "개발팀", "경영지원실", "경영지원팀"];
+      const excludeDepartments = ["경영진", "개발팀", "연구개발팀", "경영지원실", "경영지원팀"];
       const managerMap: Record<string, { sales: number; refunds: number; count: number; workCost: number; workers: Set<string>; name: string }> = {};
       const ensureManagerSummaryEntry = (managerId: unknown, managerName: unknown) => {
         const normalizedManagerId = normalizeText(managerId);
@@ -6828,7 +7002,7 @@ export async function registerRoutes(
     }
   });
 
-  app.put("/api/system-settings", requireAdmin, async (req, res) => {
+  app.put("/api/system-settings", requireDeveloper, async (req, res) => {
     try {
       const settingsSchema = z.record(z.string(), z.string());
       const parsed = settingsSchema.safeParse(req.body);

@@ -2,14 +2,15 @@ import { createContext, useContext, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
 import type { PagePermission } from "@shared/schema";
-import { allPages, departmentDefaultPages } from "@shared/schema";
+import { allPages, departmentDefaultPages, positionDefaultPages } from "@shared/schema";
 import { Skeleton } from "@/components/ui/skeleton";
 
-const ADMIN_ROLES = ["대표이사", "총괄이사", "개발자"];
+const DEVELOPER_ROLES = ["개발자"];
+const ADMIN_ONLY_PAGE_KEYS = new Set(["system_settings", "backup"]);
 const PATH_PERMISSION_ALIAS: Record<string, string> = {
   "/customers": "customers",
-  "/leads": "customers",
-  "/customer-companies": "customers",
+  "/leads": "leads",
+  "/customer-companies": "customer_companies",
 };
 
 interface PermissionsContextType {
@@ -22,10 +23,15 @@ interface PermissionsContextType {
 
 const PermissionsContext = createContext<PermissionsContextType | null>(null);
 
-function normalizePageKeys(pageKeys: string[]) {
+function normalizePageKeys(pageKeys: string[], includeAdminOnly = false) {
   return Array.from(
     new Set(
-      pageKeys.flatMap((pageKey) => (pageKey === "dashboard" ? ["dashboard", "sales_analytics"] : [pageKey])),
+      pageKeys.flatMap((pageKey) => {
+        if (!includeAdminOnly && ADMIN_ONLY_PAGE_KEYS.has(pageKey)) return [];
+        if (pageKey === "dashboard") return ["dashboard", "sales_analytics"];
+        if (pageKey === "customers") return ["customers", "leads", "customer_companies"];
+        return [pageKey];
+      }),
     ),
   );
 }
@@ -33,7 +39,7 @@ function normalizePageKeys(pageKeys: string[]) {
 export function PermissionsProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
 
-  const isAdmin = user && ADMIN_ROLES.includes(user.role || "");
+  const isDeveloper = user && DEVELOPER_ROLES.includes(user.role || "");
 
   const { data: permissions, isLoading, isFetched } = useQuery<PagePermission[]>({
     queryKey: ["/api/permissions", user?.id],
@@ -43,30 +49,35 @@ export function PermissionsProvider({ children }: { children: ReactNode }) {
       if (!res.ok) return [];
       return res.json();
     },
-    enabled: !!user && !isAdmin,
+    enabled: !!user && !isDeveloper,
   });
 
-  const isReady = isAdmin ? true : isFetched;
+  const isReady = isDeveloper ? true : isFetched;
   const resolvedPermissions = permissions ?? [];
   const explicitPageKeys = normalizePageKeys(resolvedPermissions.map((permission) => permission.pageKey));
+  const positionPageKeys = normalizePageKeys(
+    user?.role ? positionDefaultPages[user.role] ?? [] : [],
+  );
   const fallbackPageKeys = normalizePageKeys(
     user?.department ? departmentDefaultPages[user.department] ?? [] : [],
   );
 
-  const allowedPageKeys = isAdmin
-    ? normalizePageKeys(allPages.map((page) => page.key))
+  const allowedPageKeys = isDeveloper
+    ? normalizePageKeys(allPages.map((page) => page.key), true)
     : explicitPageKeys.length > 0
       ? explicitPageKeys
-      : fallbackPageKeys;
+      : positionPageKeys.length > 0
+        ? positionPageKeys
+        : fallbackPageKeys;
 
   const hasPageAccess = (pageKey: string): boolean => {
-    if (isAdmin) return true;
+    if (isDeveloper) return true;
     if (!isReady) return false;
     return allowedPageKeys.includes(pageKey);
   };
 
   const hasPathAccess = (path: string): boolean => {
-    if (isAdmin) return true;
+    if (isDeveloper) return true;
     if (!isReady) return false;
     const aliasPageKey = PATH_PERMISSION_ALIAS[path];
     if (aliasPageKey) return hasPageAccess(aliasPageKey);

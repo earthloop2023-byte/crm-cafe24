@@ -31,6 +31,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { DatePeriodFilter } from "@/components/date-period-filter";
+import type { User } from "@shared/schema";
 
 type ContractItem = {
   id?: string | number | null;
@@ -62,6 +63,9 @@ type ContractRow = {
   quantity?: number | string | null;
   productDetailsJson?: string | null;
   contractType?: string | null;
+  paymentConfirmed?: boolean | null;
+  paymentMethod?: string | null;
+  executionPaymentStatus?: string | null;
 };
 
 type DealRow = {
@@ -81,10 +85,12 @@ type DealRow = {
 
 type RefundRow = {
   id: string;
+  contractId?: string | null;
   amount?: number | string | null;
   refundAmount?: number | string | null;
   refundDate?: string | Date | null;
   createdAt?: string | Date | null;
+  managerName?: string | null;
 };
 
 type ProductRow = {
@@ -369,6 +375,7 @@ export default function SalesAnalyticsPage() {
   const [endDate, setEndDate] = useState(todayKey);
   const [periodFilter, setPeriodFilter] = useState<PeriodFilter>("thisMonth");
   const [searchTerm, setSearchTerm] = useState("");
+  const [managerFilter, setManagerFilter] = useState("all");
   const [chartYear, setChartYear] = useState(todayKey.slice(0, 4));
 
   const { data: contracts = [], refetch: refetchContracts } = useQuery<ContractRow[]>({
@@ -387,13 +394,35 @@ export default function SalesAnalyticsPage() {
     queryKey: ["/api/products"],
     queryFn: () => fetchJson<ProductRow[]>("/api/products"),
   });
+  const { data: users = [] } = useQuery<User[]>({
+    queryKey: ["/api/users"],
+    queryFn: () => fetchJson<User[]>("/api/users"),
+  });
 
   const productByName = useMemo(() => buildProductMap(products), [products]);
+
+  const managerOptions = useMemo(() => {
+    const counselorNames = new Set(
+      users
+        .filter((user) => String(user.role || "").trim() === "상담원")
+        .map((user) => String(user.name || "").trim())
+        .filter(Boolean),
+    );
+    const names = new Set<string>();
+    for (const contract of contracts) {
+      const manager = String(contract.managerName || contract.manager || "").trim();
+      if (!manager || counselorNames.has(manager)) continue;
+      names.add(manager);
+    }
+    return Array.from(names).sort((a, b) => a.localeCompare(b, "ko"));
+  }, [contracts, users]);
 
   const filteredContracts = useMemo(() => {
     const keyword = searchTerm.trim().toLowerCase();
     return contracts.filter((contract) => {
       if (!isWithinDateRange(getContractDate(contract), startDate, endDate)) return false;
+      const manager = String(contract.managerName || contract.manager || "").trim();
+      if (managerFilter !== "all" && manager !== managerFilter) return false;
       const names = getContractProductNames(contract);
       if (!keyword) return true;
       return [
@@ -405,11 +434,17 @@ export default function SalesAnalyticsPage() {
         ...names,
       ].some((value) => String(value || "").toLowerCase().includes(keyword));
     });
-  }, [contracts, endDate, productByName, searchTerm, startDate]);
+  }, [contracts, endDate, managerFilter, productByName, searchTerm, startDate]);
 
   const filteredRefunds = useMemo(() => {
-    return refunds.filter((refund) => isWithinDateRange(refund.refundDate || refund.createdAt, startDate, endDate));
-  }, [endDate, refunds, startDate]);
+    const filteredContractIds = new Set(filteredContracts.map((contract) => contract.id));
+    return refunds.filter((refund) => {
+      if (!isWithinDateRange(refund.refundDate || refund.createdAt, startDate, endDate)) return false;
+      if (managerFilter === "all") return true;
+      if (String(refund.managerName || "").trim() === managerFilter) return true;
+      return !!refund.contractId && filteredContractIds.has(refund.contractId);
+    });
+  }, [endDate, filteredContracts, managerFilter, refunds, startDate]);
 
   const filteredDeals = useMemo(() => {
     return deals.filter((deal) => isWithinDateRange(getDealDate(deal), startDate, endDate));
@@ -444,8 +479,18 @@ export default function SalesAnalyticsPage() {
     return Array.from({ length: 12 }, (_, index) => {
       const month = String(index + 1).padStart(2, "0");
       const monthKey = `${chartYear}-${month}`;
-      const monthContracts = contracts.filter((contract) => toMonthKey(getContractDate(contract)) === monthKey);
-      const monthRefundRows = refunds.filter((refund) => toMonthKey(refund.refundDate || refund.createdAt) === monthKey);
+      const monthContracts = contracts.filter((contract) => {
+        if (toMonthKey(getContractDate(contract)) !== monthKey) return false;
+        const manager = String(contract.managerName || contract.manager || "").trim();
+        return managerFilter === "all" || manager === managerFilter;
+      });
+      const monthContractIds = new Set(monthContracts.map((contract) => contract.id));
+      const monthRefundRows = refunds.filter((refund) => {
+        if (toMonthKey(refund.refundDate || refund.createdAt) !== monthKey) return false;
+        if (managerFilter === "all") return true;
+        if (String(refund.managerName || "").trim() === managerFilter) return true;
+        return !!refund.contractId && monthContractIds.has(refund.contractId);
+      });
       const sales = monthContracts.reduce((sum, contract) => sum + getContractSalesAmount(contract), 0);
       const refundsByContract = monthContracts
         .filter(isRefundContract)
@@ -459,7 +504,7 @@ export default function SalesAnalyticsPage() {
         workCost,
       };
     });
-  }, [chartYear, contracts, refunds]);
+  }, [chartYear, contracts, managerFilter, refunds]);
 
   const managerRows = useMemo(() => {
     const rows = new Map<string, { manager: string; sales: number; count: number; workCost: number }>();
@@ -494,8 +539,18 @@ export default function SalesAnalyticsPage() {
     return Array.from({ length: 3 }, (_, index) => {
       const date = new Date(target.getFullYear(), target.getMonth() - (2 - index), 1);
       const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-      const monthContracts = contracts.filter((contract) => toMonthKey(getContractDate(contract)) === monthKey);
-      const monthRefundRows = refunds.filter((refund) => toMonthKey(refund.refundDate || refund.createdAt) === monthKey);
+      const monthContracts = contracts.filter((contract) => {
+        if (toMonthKey(getContractDate(contract)) !== monthKey) return false;
+        const manager = String(contract.managerName || contract.manager || "").trim();
+        return managerFilter === "all" || manager === managerFilter;
+      });
+      const monthContractIds = new Set(monthContracts.map((contract) => contract.id));
+      const monthRefundRows = refunds.filter((refund) => {
+        if (toMonthKey(refund.refundDate || refund.createdAt) !== monthKey) return false;
+        if (managerFilter === "all") return true;
+        if (String(refund.managerName || "").trim() === managerFilter) return true;
+        return !!refund.contractId && monthContractIds.has(refund.contractId);
+      });
       const sales = monthContracts.reduce((sum, contract) => sum + getContractSalesAmount(contract), 0);
       const refundsByContract = monthContracts
         .filter(isRefundContract)
@@ -510,17 +565,17 @@ export default function SalesAnalyticsPage() {
         netProfit: sales - Math.max(refundsByContract, refundsByRows) - workCost,
       };
     });
-  }, [contracts, endDate, refunds]);
+  }, [contracts, endDate, managerFilter, refunds]);
 
   const yearOptions = Array.from({ length: 4 }, (_, index) => String(Number(todayKey.slice(0, 4)) - index));
   const metricCards: MetricCard[] = [
     { label: "총 매출 금액", value: formatCurrency(totalSales), description: "부가세 제외 공급가 기준", accent: "text-blue-600", icon: CircleDollarSign },
-    { label: "총 환불 금액", value: formatCurrency(totalRefunds), description: "환불 계약/환불 내역 기준", accent: "text-red-500", icon: TrendingDown },
-    { label: "총 작업 비용", value: formatCurrency(totalWorkCost), description: "계약 항목 작업비 합계", accent: "text-amber-600", icon: Target },
-    { label: "순 수익 금액", value: formatCurrency(netProfit), description: "총 공급가액 - 작업비 - 환불비용", accent: "text-emerald-600", icon: TrendingUp },
+    { label: "총 환불 금액", value: formatCurrency(totalRefunds), description: "환불 계약 및 환불 내역 기준", accent: "text-red-500", icon: TrendingDown },
+    { label: "총 작업 비용", value: formatCurrency(totalWorkCost), description: "계약별 실행/작업비 합계", accent: "text-amber-600", icon: Target },
+    { label: "순 수익 금액", value: formatCurrency(netProfit), description: "총 매출 - 환불 - 작업비", accent: "text-emerald-600", icon: TrendingUp },
     { label: "슬롯 발주 일수", value: formatCount(slotOrderDays, "일"), description: "슬롯 상품 일수 x 수량", accent: "text-sky-600", icon: CalendarDays },
-    { label: "월 보장 건수", value: formatCount(monthlyGuaranteeCount), description: "월 보장 상품 계약", accent: "text-violet-600", icon: Target },
-    { label: "바이럴 판매 건수", value: formatCount(viralSalesCount), description: "바이럴 상품 계약", accent: "text-fuchsia-600", icon: Sparkles },
+    { label: "월보장 계약 수", value: formatCount(monthlyGuaranteeCount), description: "월보장 상품 계약 수", accent: "text-violet-600", icon: Target },
+    { label: "바이럴 판매 건수", value: formatCount(viralSalesCount), description: "바이럴 상품 계약 수", accent: "text-fuchsia-600", icon: Sparkles },
     { label: "기타 계약 건수", value: formatCount(otherContractCount), description: "슬롯/월보장/바이럴 외 계약", accent: "text-zinc-700", icon: Box },
   ];
 
@@ -536,6 +591,7 @@ export default function SalesAnalyticsPage() {
     setEndDate(todayKey);
     setPeriodFilter("thisMonth");
     setSearchTerm("");
+    setManagerFilter("all");
     setChartYear(todayKey.slice(0, 4));
   };
 
@@ -578,6 +634,19 @@ export default function SalesAnalyticsPage() {
                 buttonClassName="w-full justify-start gap-2 rounded-none sm:w-56"
                 buttonTestId="button-date-filter"
               />
+              <Select value={managerFilter} onValueChange={setManagerFilter}>
+                <SelectTrigger className="w-full rounded-none sm:w-44" data-testid="filter-sales-manager">
+                  <SelectValue placeholder="담당자 전체" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">담당자 전체</SelectItem>
+                  {managerOptions.map((manager) => (
+                    <SelectItem key={manager} value={manager}>
+                      {manager}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               <Input
                 value={searchTerm}
                 onChange={(event) => setSearchTerm(event.target.value)}

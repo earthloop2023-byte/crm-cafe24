@@ -78,6 +78,11 @@ const isExecutionPaymentConfirmed = (status: unknown) => {
   return normalized === "입금완료" || normalized === "입금확인";
 };
 
+const isPaymentConfirmedContract = (contract: ContractWithFinancials) => {
+  const paymentMethod = normalizeText(contract.paymentMethod).replace(/\s+/g, "");
+  return contract.paymentConfirmed === true || ["입금확인", "입금완료", "국민", "국민은행", "카드결제", "크몽"].includes(paymentMethod);
+};
+
 const canonicalPaymentMethod = (value: string | null | undefined) => {
   const normalized = normalizeText(value).replace(/\s+/g, "");
   if (normalized === "입금확인" || normalized === "입금완료") return "입금확인";
@@ -604,6 +609,11 @@ export default function PaymentsContentPage() {
   const totalCost = filteredRows.reduce((sum, row) => sum + row.totalAmount, 0);
   const totalRefunds = filteredRows.reduce((sum, row) => sum + row.refundAmount, 0);
   const totalWorkCost = filteredRows.reduce((sum, row) => sum + row.workAmount, 0);
+  const totalDepositAmount = filteredRows.reduce(
+    (sum, row) => sum + (isPaymentConfirmedContract(row.contract) ? getDisplayedNetAmount(row) : 0),
+    0,
+  );
+  const totalReceivableAmount = Math.max(0, totalCost - totalRefunds - totalDepositAmount);
   const executionPaidWorkCost = filteredRows.reduce(
     (sum, row) => sum + (isExecutionPaymentConfirmed(row.contract.executionPaymentStatus) ? row.workAmount : 0),
     0,
@@ -649,12 +659,12 @@ export default function PaymentsContentPage() {
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <Card className="rounded-none">
           <CardContent className="p-4">
             <div className="flex items-center justify-between gap-2">
               <div>
-                <p className="text-xs text-muted-foreground">총 계약금액</p>
+                <p className="text-xs text-muted-foreground">계약금액</p>
                 <p className="text-xl font-bold mt-1" data-testid="text-total-cost">{formatAmount(totalCost)}원</p>
               </div>
               <TrendingUp className="w-8 h-8 text-green-500 opacity-50" />
@@ -665,7 +675,7 @@ export default function PaymentsContentPage() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between gap-2">
               <div>
-                <p className="text-xs text-muted-foreground">총 환불</p>
+                <p className="text-xs text-muted-foreground">환불금액</p>
                 <p className="text-xl font-bold mt-1 text-red-500" data-testid="text-total-refund">-{formatAmount(totalRefunds)}원</p>
               </div>
               <TrendingDown className="w-8 h-8 text-red-500 opacity-50" />
@@ -676,7 +686,7 @@ export default function PaymentsContentPage() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between gap-2">
               <div>
-                <p className="text-xs text-muted-foreground">총 작업비</p>
+                <p className="text-xs text-muted-foreground">작업비용</p>
                 <p className="text-xl font-bold mt-1 text-blue-500" data-testid="text-total-work-cost">{formatAmount(totalWorkCost)}원</p>
               </div>
               <Coins className="w-8 h-8 text-blue-500 opacity-50" />
@@ -687,7 +697,7 @@ export default function PaymentsContentPage() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between gap-2">
               <div>
-                <p className="text-xs text-muted-foreground">순매출</p>
+                <p className="text-xs text-muted-foreground">순 매출</p>
                 <p className="text-xl font-bold mt-1" data-testid="text-net-amount">{formatAmount(netAmount)}원</p>
               </div>
               <CreditCard className="w-8 h-8 text-primary opacity-50" />
@@ -698,7 +708,33 @@ export default function PaymentsContentPage() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between gap-2">
               <div>
-                <p className="text-xs text-muted-foreground">실행비 결제 내역</p>
+                <p className="text-xs text-muted-foreground">입금금액</p>
+                <p className="text-xl font-bold mt-1 text-sky-600" data-testid="text-total-deposit-amount">
+                  {formatAmount(totalDepositAmount)}원
+                </p>
+              </div>
+              <CheckCircle className="w-8 h-8 text-sky-500 opacity-50" />
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="rounded-none">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <p className="text-xs text-muted-foreground">미수금</p>
+                <p className="text-xl font-bold mt-1 text-rose-600" data-testid="text-total-receivable-amount">
+                  {formatAmount(totalReceivableAmount)}원
+                </p>
+              </div>
+              <Coins className="w-8 h-8 text-rose-500 opacity-50" />
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="rounded-none">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <p className="text-xs text-muted-foreground">실행비 결제내역</p>
                 <p className="text-xl font-bold mt-1 text-emerald-600" data-testid="text-execution-paid-work-cost">
                   {formatAmount(executionPaidWorkCost)}원
                 </p>

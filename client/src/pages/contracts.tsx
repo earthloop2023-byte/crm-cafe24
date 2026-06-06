@@ -823,7 +823,7 @@ export default function ContractsPage() {
       managerName: value,
     }));
   };
-  const showProfitColumns = currentUser?.role !== "B";
+  const showProfitColumns = !["매니저", "상담원"].includes(currentUser?.role || "");
   const contractsTableColSpan = showProfitColumns ? 16 : 13;
   const isEditReadOnly = editDialogMode === "view";
   const matchedDepositForEditingContract = editingContractId
@@ -3143,9 +3143,13 @@ export default function ContractsPage() {
               선택 {selectedSummary.rowCount}행 / {selectedSummary.contractCount}계약
             </span>
             <span>공급가액 {formatCurrency(selectedSummary.cost)}</span>
-            <span>작업비 {formatCurrency(selectedSummary.workCost)}</span>
-            <span>마진 {formatCurrency(selectedSummary.margin)}</span>
-            <span>마진율 {formatPercent(selectedSummary.marginRate)}</span>
+            {showProfitColumns ? (
+              <>
+                <span>작업비 {formatCurrency(selectedSummary.workCost)}</span>
+                <span>마진 {formatCurrency(selectedSummary.margin)}</span>
+                <span>마진율 {formatPercent(selectedSummary.marginRate)}</span>
+              </>
+            ) : null}
             <Button
               type="button"
               variant="ghost"

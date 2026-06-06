@@ -61,7 +61,7 @@ export default function DepositConfirmationsPage() {
   const { toast } = useToast();
   const { formatDate } = useSettings();
   const hasDepositActionAccess =
-    ["경영지원팀", "개발팀"].includes((user?.department || "").trim()) ||
+    ["경영지원팀", "개발팀", "연구개발팀"].includes((user?.department || "").trim()) ||
     ["대표이사", "총괄이사", "개발자"].includes((user?.role || "").trim());
   const showDepositActionDeniedMessage = () => {
     toast({ title: "입금확인 등록, 엑셀 업로드, 수정, 삭제는 경영지원팀/개발팀 또는 대표이사/총괄이사/개발자만 가능합니다.", variant: "destructive" });
