@@ -129,7 +129,7 @@ function toMonthKey(value: unknown): string {
   return toDateKey(value).slice(0, 7);
 }
 
-type PeriodFilter = "custom" | "yesterday" | "today" | "lastWeek" | "thisWeek" | "nextWeek" | "lastMonth" | "thisMonth" | "nextMonth" | "lastYear" | "thisYear";
+type PeriodFilter = "custom" | "yesterday" | "today" | "lastWeek" | "lastMonth" | "thisMonth" | "lastYear" | "thisYear";
 
 function dateFromKey(dateKey: string): Date {
   const [year, month, day] = dateKey.split("-").map((part) => Number(part));
@@ -163,14 +163,6 @@ function getRelativeDateRange(filter: PeriodFilter, todayKey: string): { startDa
     const start = addDays(thisWeekStart, -7);
     return { startDate: toDateKey(start), endDate: toDateKey(addDays(start, 6)) };
   }
-  if (filter === "thisWeek") {
-    return { startDate: toDateKey(thisWeekStart), endDate: toDateKey(addDays(thisWeekStart, 6)) };
-  }
-  if (filter === "nextWeek") {
-    const start = addDays(thisWeekStart, 7);
-    return { startDate: toDateKey(start), endDate: toDateKey(addDays(start, 6)) };
-  }
-
   const year = today.getFullYear();
   const month = today.getMonth();
   if (filter === "lastMonth") {
@@ -178,9 +170,6 @@ function getRelativeDateRange(filter: PeriodFilter, todayKey: string): { startDa
   }
   if (filter === "thisMonth" || filter === "custom") {
     return { startDate: toDateKey(new Date(year, month, 1)), endDate: todayKey };
-  }
-  if (filter === "nextMonth") {
-    return { startDate: toDateKey(new Date(year, month + 1, 1)), endDate: toDateKey(new Date(year, month + 2, 0)) };
   }
   if (filter === "lastYear") {
     return { startDate: `${year - 1}-01-01`, endDate: `${year - 1}-12-31` };
@@ -616,17 +605,14 @@ export default function SalesAnalyticsPage() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent className="rounded-none">
-                  <SelectItem value="yesterday">??</SelectItem>
-                  <SelectItem value="today">??</SelectItem>
-                  <SelectItem value="lastWeek">지난주</SelectItem>
-                  <SelectItem value="thisWeek">이번주</SelectItem>
-                  <SelectItem value="nextWeek">다음주</SelectItem>
-                  <SelectItem value="lastMonth">지난달</SelectItem>
                   <SelectItem value="thisMonth">이번달</SelectItem>
-                  <SelectItem value="nextMonth">다음달</SelectItem>
-                  <SelectItem value="lastYear">??</SelectItem>
-                  <SelectItem value="thisYear">??</SelectItem>
-                  <SelectItem value="reset">??</SelectItem>
+                  <SelectItem value="yesterday">어제</SelectItem>
+                  <SelectItem value="today">오늘</SelectItem>
+                  <SelectItem value="lastWeek">지난주</SelectItem>
+                  <SelectItem value="lastMonth">지난달</SelectItem>
+                  <SelectItem value="lastYear">작년</SelectItem>
+                  <SelectItem value="thisYear">올해</SelectItem>
+                  <SelectItem value="reset">필터삭제</SelectItem>
                 </SelectContent>
               </Select>
               <Input

@@ -654,7 +654,7 @@ export default function CustomersPage() {
                   <TableCell className="text-xs">{customer.phone || "-"}</TableCell>
                   <TableCell className="text-xs">{customer.customerType || "-"}</TableCell>
                   <TableCell className="text-xs">{customer.customerCategory || "-"}</TableCell>
-                  <TableCell className="text-right text-xs">{(customerListSummaryById.get(customer.id)?.contractCount || 0).toLocaleString("ko-KR")}?</TableCell>
+                  <TableCell className="text-right text-xs">{(customerListSummaryById.get(customer.id)?.contractCount || 0).toLocaleString("ko-KR")}건</TableCell>
                   <TableCell className="text-right text-xs">{formatCurrency(customerListSummaryById.get(customer.id)?.totalContractAmount || 0)}</TableCell>
                   <TableCell className="text-right text-xs text-red-600">{formatCurrency(customerListSummaryById.get(customer.id)?.totalRefundAmount || 0)}</TableCell>
                   <TableCell className="max-w-[260px] text-xs">
