@@ -94,6 +94,20 @@ function applyTimeFormat(date: Date, timezone: string): string {
   }).format(date);
 }
 
+function parseDisplayDate(date: Date | string): Date {
+  if (date instanceof Date) return date;
+  const trimmed = date.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return new Date(`${trimmed}T00:00:00+09:00`);
+  }
+  const hasExplicitTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(trimmed);
+  if (hasExplicitTimezone) {
+    return new Date(trimmed);
+  }
+  const normalized = trimmed.includes("T") ? trimmed : trimmed.replace(" ", "T");
+  return new Date(`${normalized}Z`);
+}
+
 export function SettingsProvider({ children }: { children: React.ReactNode }) {
   const { data } = useQuery<SystemSettings>({
     queryKey: ["/api/system-settings"],
@@ -105,21 +119,21 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
 
   const formatDate = useCallback((date: Date | string | null | undefined): string => {
     if (!date) return "-";
-    const d = typeof date === "string" ? new Date(date) : date;
+    const d = parseDisplayDate(date);
     if (isNaN(d.getTime())) return "-";
     return applyDateFormat(d, settings.system_date_format, displayTimezone);
   }, [settings.system_date_format, displayTimezone]);
 
   const formatDateTime = useCallback((date: Date | string | null | undefined): string => {
     if (!date) return "-";
-    const d = typeof date === "string" ? new Date(date) : date;
+    const d = parseDisplayDate(date);
     if (isNaN(d.getTime())) return "-";
     return applyDateTimeFormat(d, settings.system_date_format, displayTimezone);
   }, [settings.system_date_format, displayTimezone]);
 
   const formatTime = useCallback((date: Date | string | null | undefined): string => {
     if (!date) return "-";
-    const d = typeof date === "string" ? new Date(date) : date;
+    const d = parseDisplayDate(date);
     if (isNaN(d.getTime())) return "-";
     return applyTimeFormat(d, displayTimezone);
   }, [displayTimezone]);
