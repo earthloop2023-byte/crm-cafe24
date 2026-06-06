@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,6 +18,7 @@ import { useSettings } from "@/lib/settings";
 import { formatCeilAmount } from "@/lib/utils";
 import { matchesKoreanSearch } from "@shared/korean-search";
 import { useToast } from "@/hooks/use-toast";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 
 type RefundReferenceRow = {
   id: string;
@@ -145,6 +146,33 @@ export default function RefundsPage() {
   const paginatedRows = filteredRows.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
   const totalRefundAmount = filteredRows.reduce((sum, row) => sum + row.refundAmount, 0);
   const isLoading = contractsLoading;
+
+  const withdrawRefundMutation = useMutation({
+    mutationFn: async (refundContractId: string) => {
+      await apiRequest("POST", `/api/refund-contracts/${refundContractId}/withdraw`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/contracts"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/contracts/paged"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/contracts-with-financials"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/refunds"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/sales-analytics"] });
+      toast({ title: "?? ??? ??????." });
+    },
+    onError: (error) => {
+      toast({
+        title: error instanceof Error ? error.message : "?? ?? ? ??? ??????.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleWithdrawRefund = (row: RefundReferenceRow) => {
+    const refundContractId = row.id.startsWith("contract:") ? row.id.slice("contract:".length) : "";
+    if (!refundContractId) return;
+    if (!window.confirm("??? ?? ??? ???? ?????? ?????????")) return;
+    withdrawRefundMutation.mutate(refundContractId);
+  };
 
   const resetFilters = () => {
     setSearchQuery("");
@@ -356,7 +384,7 @@ export default function RefundsPage() {
                 {isLoading ? (
                   Array.from({ length: 5 }).map((_, index) => (
                     <tr key={index} className="border-b border-border">
-                      {Array.from({ length: 16 }).map((__, cellIndex) => (
+                      {Array.from({ length: 17 }).map((__, cellIndex) => (
                         <td key={cellIndex} className="p-4">
                           <Skeleton className="h-4 w-20" />
                         </td>
@@ -365,7 +393,7 @@ export default function RefundsPage() {
                   ))
                 ) : paginatedRows.length === 0 ? (
                   <tr>
-                    <td colSpan={16} className="p-12 text-center text-muted-foreground">
+                    <td colSpan={17} className="p-12 text-center text-muted-foreground">
                       조회할 환불 참고 데이터가 없습니다.
                     </td>
                   </tr>
@@ -396,6 +424,18 @@ export default function RefundsPage() {
                         </span>
                       </td>
                       <td className="p-4 text-xs whitespace-nowrap">{row.createdBy || "-"}</td>
+                      <td className="p-4 text-right whitespace-nowrap">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-8 rounded-none text-xs"
+                          onClick={() => handleWithdrawRefund(row)}
+                          disabled={withdrawRefundMutation.isPending}
+                          data-testid={`button-withdraw-refund-${row.id.replace(/[^a-zA-Z0-9_-]/g, "-")}`}
+                        >
+                          ??
+                        </Button>
+                      </td>
                     </tr>
                   ))
                 )}

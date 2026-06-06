@@ -394,6 +394,22 @@ async function clearDepositRefundMatches(depositId: string) {
   await pool.query(`DELETE FROM deposit_refund_matches WHERE deposit_id = $1`, [depositId]);
 }
 
+async function hasContractDepositMatch(contractId: string): Promise<boolean> {
+  const normalizedContractId = String(contractId || "").trim();
+  if (!normalizedContractId) return false;
+  const result = await pool.query<{ matched: boolean }>(
+    `
+      SELECT EXISTS (
+        SELECT 1
+        FROM deposits
+        WHERE contract_id = $1
+      ) AS matched
+    `,
+    [normalizedContractId],
+  );
+  return Boolean(result.rows[0]?.matched);
+}
+
 async function ensureFinancialHistoryColumns() {
   await pool.query(`
     ALTER TABLE refunds
@@ -3117,7 +3133,40 @@ export async function registerRoutes(
   app.get("/api/customers", async (_req, res) => {
     try {
       const customers = await storage.getCustomers();
-      res.json(customers);
+      if (customers.length === 0) {
+        res.json(customers);
+        return;
+      }
+
+      const counselingResult = await pool.query(
+        `
+          SELECT DISTINCT ON (customer_id)
+                 customer_id AS "customerId",
+                 counseling_date AS "lastCounselingDate",
+                 content,
+                 created_at AS "lastCounselingCreatedAt"
+          FROM customer_counselings
+          ORDER BY customer_id, counseling_date DESC, created_at DESC
+        `,
+      );
+      const latestCounselingByCustomerId = new Map(
+        counselingResult.rows.map((row) => {
+          const decrypted = decryptRawTableRow("customer_counselings", row);
+          return [String(decrypted.customerId), decrypted];
+        }),
+      );
+
+      res.json(
+        customers.map((customer) => {
+          const latestCounseling = latestCounselingByCustomerId.get(String(customer.id));
+          return {
+            ...customer,
+            lastCounselingDate: latestCounseling?.lastCounselingDate ?? null,
+            lastCounselingContent: latestCounseling?.content ?? null,
+            lastCounselingCreatedAt: latestCounseling?.lastCounselingCreatedAt ?? null,
+          };
+        }),
+      );
     } catch (error) {
       console.error("Error fetching customers:", error);
       res.status(500).json({ error: "Failed to fetch customers" });
@@ -4677,6 +4726,31 @@ export async function registerRoutes(
   app.delete("/api/contracts/:id", async (req, res) => {
     try {
       const contractId = toSingleString(req.params.id);
+      const contract = await storage.getContract(contractId);
+      if (!contract) {
+        return res.status(404).json({ error: "Contract not found" });
+      }
+
+      if (contract.contractType === CONTRACT_TYPE_REFUND) {
+        return res.status(409).json({ error: "환불 계약은 환불관리의 철회 버튼으로만 삭제할 수 있습니다." });
+      }
+
+      const [refundContracts, refundRows, depositMatched] = await Promise.all([
+        storage.getRefundContractsBySource(contractId),
+        storage.getRefundsByContract(contractId),
+        hasContractDepositMatch(contractId),
+      ]);
+      const paymentConfirmed =
+        contract.paymentConfirmed === true ||
+        normalizeContractPaymentMethod(contract.paymentMethod) === PAYMENT_METHOD_DEPOSIT_CONFIRMED;
+
+      if (refundContracts.length > 0 || refundRows.length > 0) {
+        return res.status(409).json({ error: "환불 내역이 매칭된 계약은 삭제할 수 없습니다. 환불관리에서 먼저 철회해주세요." });
+      }
+      if (depositMatched || paymentConfirmed) {
+        return res.status(409).json({ error: "입금확인 또는 입금 매칭된 계약은 삭제할 수 없습니다." });
+      }
+
       await storage.deleteContract(contractId);
       res.status(204).send();
     } catch (error) {
@@ -4828,6 +4902,44 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error deleting refund:", error);
       res.status(500).json({ error: "Failed to delete refund" });
+    }
+  });
+
+  app.post("/api/refund-contracts/:id/withdraw", async (req, res) => {
+    try {
+      const refundContractId = toSingleString(req.params.id);
+      const refundContract = await storage.getContract(refundContractId);
+      if (!refundContract) {
+        return res.status(404).json({ error: "Refund contract not found" });
+      }
+      if (refundContract.contractType !== CONTRACT_TYPE_REFUND) {
+        return res.status(400).json({ error: "Only refund contracts can be withdrawn." });
+      }
+      const depositMatched = await hasContractDepositMatch(refundContractId);
+      const paymentConfirmed =
+        refundContract.paymentConfirmed === true ||
+        normalizeContractPaymentMethod(refundContract.paymentMethod) === PAYMENT_METHOD_DEPOSIT_CONFIRMED;
+
+      if (depositMatched || paymentConfirmed) {
+        return res.status(409).json({ error: "입금확인 또는 입금 매칭된 환불 내역은 철회할 수 없습니다." });
+      }
+
+      await storage.deleteContract(refundContractId);
+
+      await writeSystemLog(req, {
+        actionType: "contract_delete",
+        action: `환불 철회: ${refundContract.contractNumber || refundContractId}`,
+        details: `refundContractId=${refundContractId}, sourceContractId=${refundContract.sourceContractId || "-"}`,
+      });
+
+      res.json({
+        success: true,
+        id: refundContractId,
+        sourceContractId: refundContract.sourceContractId || null,
+      });
+    } catch (error) {
+      console.error("Error withdrawing refund contract:", error);
+      res.status(500).json({ error: "Failed to withdraw refund contract" });
     }
   });
   app.get("/api/permissions", async (_req, res) => {

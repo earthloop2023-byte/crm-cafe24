@@ -1,11 +1,13 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { format } from "date-fns";
+import { ko } from "date-fns/locale";
 import {
   BarChart3,
   Box,
+  Calendar as CalendarIcon,
   CalendarDays,
   CircleDollarSign,
-  FileText,
   RefreshCw,
   RotateCcw,
   Search,
@@ -29,6 +31,8 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { CustomCalendar } from "@/components/custom-calendar";
 
 type ContractItem = {
   id?: string | number | null;
@@ -125,6 +129,65 @@ function toMonthKey(value: unknown): string {
   return toDateKey(value).slice(0, 7);
 }
 
+type PeriodFilter = "custom" | "yesterday" | "today" | "lastWeek" | "thisWeek" | "nextWeek" | "lastMonth" | "thisMonth" | "nextMonth" | "lastYear" | "thisYear";
+
+function dateFromKey(dateKey: string): Date {
+  const [year, month, day] = dateKey.split("-").map((part) => Number(part));
+  return new Date(year, (month || 1) - 1, day || 1);
+}
+
+function addDays(date: Date, amount: number): Date {
+  const next = new Date(date);
+  next.setDate(next.getDate() + amount);
+  return next;
+}
+
+function getWeekStart(date: Date): Date {
+  const next = new Date(date);
+  const day = next.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  next.setDate(next.getDate() + diff);
+  return next;
+}
+
+function getRelativeDateRange(filter: PeriodFilter, todayKey: string): { startDate: string; endDate: string } {
+  const today = dateFromKey(todayKey);
+  if (filter === "yesterday") {
+    const target = addDays(today, -1);
+    return { startDate: toDateKey(target), endDate: toDateKey(target) };
+  }
+  if (filter === "today") return { startDate: todayKey, endDate: todayKey };
+
+  const thisWeekStart = getWeekStart(today);
+  if (filter === "lastWeek") {
+    const start = addDays(thisWeekStart, -7);
+    return { startDate: toDateKey(start), endDate: toDateKey(addDays(start, 6)) };
+  }
+  if (filter === "thisWeek") {
+    return { startDate: toDateKey(thisWeekStart), endDate: toDateKey(addDays(thisWeekStart, 6)) };
+  }
+  if (filter === "nextWeek") {
+    const start = addDays(thisWeekStart, 7);
+    return { startDate: toDateKey(start), endDate: toDateKey(addDays(start, 6)) };
+  }
+
+  const year = today.getFullYear();
+  const month = today.getMonth();
+  if (filter === "lastMonth") {
+    return { startDate: toDateKey(new Date(year, month - 1, 1)), endDate: toDateKey(new Date(year, month, 0)) };
+  }
+  if (filter === "thisMonth" || filter === "custom") {
+    return { startDate: toDateKey(new Date(year, month, 1)), endDate: todayKey };
+  }
+  if (filter === "nextMonth") {
+    return { startDate: toDateKey(new Date(year, month + 1, 1)), endDate: toDateKey(new Date(year, month + 2, 0)) };
+  }
+  if (filter === "lastYear") {
+    return { startDate: `${year - 1}-01-01`, endDate: `${year - 1}-12-31` };
+  }
+  return { startDate: `${year}-01-01`, endDate: todayKey };
+}
+
 function toAmount(value: unknown): number {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   const parsed = Number(String(value ?? "").replace(/[^\d.-]/g, ""));
@@ -189,6 +252,10 @@ function isViralProduct(name: string): boolean {
   return name.replace(/\s+/g, "").includes("바이럴");
 }
 
+function isMonthlyGuaranteeText(value: unknown): boolean {
+  return normalizeProductKey(value).includes("월보장");
+}
+
 function normalizeProductKey(value: unknown): string {
   return String(value || "").replace(/\s+/g, "").trim();
 }
@@ -215,6 +282,11 @@ function resolveProduct(productName: unknown, productByName: Map<string, Product
 function isSlotProductByCategory(productName: unknown, productByName: Map<string, ProductRow>): boolean {
   const product = resolveProduct(productName, productByName);
   return normalizeProductKey(product?.category).includes("슬롯");
+}
+
+function isMonthlyGuaranteeProduct(productName: unknown, productByName: Map<string, ProductRow>): boolean {
+  const product = resolveProduct(productName, productByName);
+  return isMonthlyGuaranteeText(productName) || isMonthlyGuaranteeText(product?.category);
 }
 
 function getItemQuantity(item: ContractItem, contract?: ContractRow): number {
@@ -308,7 +380,7 @@ export default function SalesAnalyticsPage() {
   const todayKey = toDateKey(new Date());
   const [startDate, setStartDate] = useState(`${todayKey.slice(0, 8)}01`);
   const [endDate, setEndDate] = useState(todayKey);
-  const [department, setDepartment] = useState("all");
+  const [periodFilter, setPeriodFilter] = useState<PeriodFilter>("thisMonth");
   const [searchTerm, setSearchTerm] = useState("");
   const [chartYear, setChartYear] = useState(todayKey.slice(0, 4));
 
@@ -336,12 +408,6 @@ export default function SalesAnalyticsPage() {
     return contracts.filter((contract) => {
       if (!isWithinDateRange(getContractDate(contract), startDate, endDate)) return false;
       const names = getContractProductNames(contract);
-      const matchesDepartment =
-        department === "all" ||
-        (department === "slot" && names.some((name) => isSlotProductByCategory(name, productByName))) ||
-        (department === "viral" && names.some(isViralProduct)) ||
-        (department === "other" && !names.some((name) => isSlotProductByCategory(name, productByName) || isViralProduct(name)));
-      if (!matchesDepartment) return false;
       if (!keyword) return true;
       return [
         contract.customerName,
@@ -352,7 +418,7 @@ export default function SalesAnalyticsPage() {
         ...names,
       ].some((value) => String(value || "").toLowerCase().includes(keyword));
     });
-  }, [contracts, department, endDate, productByName, searchTerm, startDate]);
+  }, [contracts, endDate, productByName, searchTerm, startDate]);
 
   const filteredRefunds = useMemo(() => {
     return refunds.filter((refund) => isWithinDateRange(refund.refundDate || refund.createdAt, startDate, endDate));
@@ -374,15 +440,18 @@ export default function SalesAnalyticsPage() {
   const viralSalesCount = filteredContracts.filter((contract) =>
     !isRefundContract(contract) && getContractProductNames(contract).some(isViralProduct)
   ).length;
+  const monthlyGuaranteeCount = filteredContracts.filter((contract) =>
+    !isRefundContract(contract) && getContractProductNames(contract).some((name) => isMonthlyGuaranteeProduct(name, productByName))
+  ).length;
   const otherContractCount = filteredContracts.filter((contract) => {
     if (isRefundContract(contract)) return false;
     const names = getContractProductNames(contract);
-    return names.length === 0 || !names.some((name) => isSlotProductByCategory(name, productByName) || isViralProduct(name));
+    return names.length === 0 || !names.some((name) =>
+      isSlotProductByCategory(name, productByName) ||
+      isMonthlyGuaranteeProduct(name, productByName) ||
+      isViralProduct(name)
+    );
   }).length;
-  const refundCount = Math.max(
-    filteredContracts.filter(isRefundContract).length,
-    filteredRefunds.length,
-  );
 
   const monthlyRows = useMemo(() => {
     return Array.from({ length: 12 }, (_, index) => {
@@ -463,9 +532,9 @@ export default function SalesAnalyticsPage() {
     { label: "총 작업 비용", value: formatCurrency(totalWorkCost), description: "계약 항목 작업비 합계", accent: "text-amber-600", icon: Target },
     { label: "순 수익 금액", value: formatCurrency(netProfit), description: "총 공급가액 - 작업비 - 환불비용", accent: "text-emerald-600", icon: TrendingUp },
     { label: "슬롯 발주 일수", value: formatCount(slotOrderDays, "일"), description: "슬롯 상품 일수 x 수량", accent: "text-sky-600", icon: CalendarDays },
+    { label: "월 보장 건수", value: formatCount(monthlyGuaranteeCount), description: "월 보장 상품 계약", accent: "text-violet-600", icon: Target },
     { label: "바이럴 판매 건수", value: formatCount(viralSalesCount), description: "바이럴 상품 계약", accent: "text-fuchsia-600", icon: Sparkles },
-    { label: "기타 계약 건수", value: formatCount(otherContractCount), description: "슬롯/바이럴 외 계약", accent: "text-zinc-700", icon: Box },
-    { label: "환불 건수", value: formatCount(refundCount), description: "환불 계약 또는 환불 내역", accent: "text-red-600", icon: FileText },
+    { label: "기타 계약 건수", value: formatCount(otherContractCount), description: "슬롯/월보장/바이럴 외 계약", accent: "text-zinc-700", icon: Box },
   ];
 
   const refreshAll = () => {
@@ -478,7 +547,7 @@ export default function SalesAnalyticsPage() {
   const resetFilters = () => {
     setStartDate(`${todayKey.slice(0, 8)}01`);
     setEndDate(todayKey);
-    setDepartment("all");
+    setPeriodFilter("thisMonth");
     setSearchTerm("");
     setChartYear(todayKey.slice(0, 4));
   };
@@ -507,29 +576,57 @@ export default function SalesAnalyticsPage() {
                 <Search className="h-4 w-4" />
                 통합 필터
               </div>
-              <div className="flex flex-col gap-2 sm:flex-row">
-                <Input
-                  type="date"
-                  value={startDate}
-                  onChange={(event) => setStartDate(event.target.value)}
-                  className="sm:w-40"
-                />
-                <Input
-                  type="date"
-                  value={endDate}
-                  onChange={(event) => setEndDate(event.target.value)}
-                  className="sm:w-40"
-                />
-              </div>
-              <Select value={department} onValueChange={setDepartment}>
-                <SelectTrigger className="sm:w-36">
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" className="w-full justify-start gap-2 rounded-none sm:w-56" data-testid="button-date-filter">
+                    <CalendarIcon className="h-4 w-4 text-muted-foreground" />
+                    {format(toKoreanDate(startDate) || new Date(), "yyyy.MM.dd", { locale: ko })} ~ {format(toKoreanDate(endDate) || new Date(), "yyyy.MM.dd", { locale: ko })}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0 rounded-none bg-white" align="start">
+                  <CustomCalendar
+                    startDate={toKoreanDate(startDate) || new Date()}
+                    endDate={toKoreanDate(endDate) || new Date()}
+                    onSelectStart={(date) => {
+                      setStartDate(toDateKey(date));
+                      setPeriodFilter("custom");
+                    }}
+                    onSelectEnd={(date) => {
+                      setEndDate(toDateKey(date));
+                      setPeriodFilter("custom");
+                    }}
+                  />
+                </PopoverContent>
+              </Popover>
+              <Select
+                value={periodFilter}
+                onValueChange={(value) => {
+                  if (value === "reset") {
+                    resetFilters();
+                    return;
+                  }
+                  const nextFilter = value as PeriodFilter;
+                  const nextRange = getRelativeDateRange(nextFilter, todayKey);
+                  setPeriodFilter(nextFilter);
+                  setStartDate(nextRange.startDate);
+                  setEndDate(nextRange.endDate);
+                }}
+              >
+                <SelectTrigger className="rounded-none sm:w-32" data-testid="filter-period">
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">부서 전체</SelectItem>
-                  <SelectItem value="slot">슬롯</SelectItem>
-                  <SelectItem value="viral">바이럴</SelectItem>
-                  <SelectItem value="other">기타</SelectItem>
+                <SelectContent className="rounded-none">
+                  <SelectItem value="yesterday">??</SelectItem>
+                  <SelectItem value="today">??</SelectItem>
+                  <SelectItem value="lastWeek">???</SelectItem>
+                  <SelectItem value="thisWeek">???</SelectItem>
+                  <SelectItem value="nextWeek">???</SelectItem>
+                  <SelectItem value="lastMonth">???</SelectItem>
+                  <SelectItem value="thisMonth">???</SelectItem>
+                  <SelectItem value="nextMonth">???</SelectItem>
+                  <SelectItem value="lastYear">??</SelectItem>
+                  <SelectItem value="thisYear">??</SelectItem>
+                  <SelectItem value="reset">??</SelectItem>
                 </SelectContent>
               </Select>
               <Input
@@ -549,7 +646,7 @@ export default function SalesAnalyticsPage() {
 
       <section className="space-y-3">
         <div>
-          <h2 className="text-base font-semibold">마케팅</h2>
+          <h2 className="text-base font-semibold">성과 요약</h2>
           <p className="text-sm text-muted-foreground">모든 금액은 부가세 제외 기준입니다.</p>
         </div>
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -572,7 +669,7 @@ export default function SalesAnalyticsPage() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="border-l-4 border-primary pl-2 text-lg font-semibold">마케팅</h2>
+        <h2 className="border-l-4 border-primary pl-2 text-lg font-semibold">매출 추이</h2>
         <Card className="rounded-none shadow-none">
           <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <CardTitle className="text-base">년별 매출 추이</CardTitle>

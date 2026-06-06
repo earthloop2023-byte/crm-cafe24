@@ -19,10 +19,11 @@ const PRODUCT_DETAIL_CUSTOM_VALUE = "__CUSTOM_PRODUCT_DETAIL__";
 const DEFAULT_PRODUCT_DETAIL_BY_GROUP: Record<string, string> = {
   슬롯상품: "슬롯상품",
   바이럴상품: "바이럴상품",
-  "외주 실행비용 상품": "외주 실행비용 상품",
+  "월 보장 상품": "월 보장 상품",
+  "외주 실행 비용": "외주 실행 비용",
   기타: "기타",
 };
-const HIDDEN_PRODUCT_DETAIL_LABELS = new Set(["슬롯", "슬롯상품", "바이럴상품", "외주 실행비용 상품"]);
+const HIDDEN_PRODUCT_DETAIL_LABELS = new Set(["슬롯", "슬롯상품", "바이럴상품", "월 보장 상품", "외주 실행비용 상품", "외주 실행 비용"]);
 
 function normalizeCategoryKey(value: unknown): string {
   return String(value || "").replace(/\s+/g, "").trim();
@@ -40,8 +41,9 @@ function normalizeProductCategoryGroup(value: unknown): string {
   const compact = normalizeCategoryKey(raw);
 
   if (!compact) return "기타";
-  if (compact.includes("외주") || compact.includes("실행비용")) return "외주 실행비용 상품";
+  if (compact.includes("외주") || compact.includes("실행비용")) return "외주 실행 비용";
   if (compact.includes("슬롯")) return "슬롯상품";
+  if (compact.includes("월보장")) return "월 보장 상품";
   if (compact.includes("바이럴")) return "바이럴상품";
   if (compact === "기타") return "기타";
   return "기타";

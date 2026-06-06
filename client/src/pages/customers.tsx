@@ -97,6 +97,18 @@ type CustomerFile = {
   createdAt: string;
 };
 
+type CustomerListRow = Customer & {
+  lastCounselingDate?: string | null;
+  lastCounselingContent?: string | null;
+  lastCounselingCreatedAt?: string | null;
+};
+
+type CustomerListSummary = {
+  contractCount: number;
+  totalContractAmount: number;
+  totalRefundAmount: number;
+};
+
 const customerFormSchema = insertCustomerSchema.extend({
   name: z.string().trim().min(1, "고객명을 입력하세요"),
   email: z.string().optional().or(z.literal("")),
@@ -346,9 +358,37 @@ export default function CustomersPage() {
   const [sortField, setSortField] = useState<SortField>("createdAt");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
 
-  const { data: customers = [], isLoading } = useQuery<Customer[]>({
+  const { data: customers = [], isLoading } = useQuery<CustomerListRow[]>({
     queryKey: ["/api/customers"],
   });
+
+  const { data: customerListContracts = [] } = useQuery<ContractWithFinancials[]>({
+    queryKey: ["/api/contracts-with-financials"],
+  });
+
+  const customerListSummaryById = useMemo(() => {
+    const map = new Map<string, CustomerListSummary>();
+    customers.forEach((customer) => {
+      map.set(customer.id, { contractCount: 0, totalContractAmount: 0, totalRefundAmount: 0 });
+    });
+
+    for (const contract of customerListContracts) {
+      const customer = customers.find((item) => isCustomerMatch(item, contract));
+      if (!customer) continue;
+      const current = map.get(customer.id) || { contractCount: 0, totalContractAmount: 0, totalRefundAmount: 0 };
+      const isRefund = String((contract as { contractType?: string | null }).contractType || "").toLowerCase() === "refund" || toNumber(contract.cost) < 0;
+      if (isRefund) {
+        current.totalRefundAmount += Math.abs(toNumber(contract.cost));
+      } else {
+        current.contractCount += 1;
+        current.totalContractAmount += Math.max(0, toNumber(contract.cost));
+        current.totalRefundAmount += Math.max(0, toNumber(contract.totalRefund));
+      }
+      map.set(customer.id, current);
+    }
+
+    return map;
+  }, [customerListContracts, customers]);
 
   const filteredCustomers = useMemo(() => {
     const keyword = search.trim();
@@ -363,6 +403,7 @@ export default function CustomersPage() {
           customer.customerCategory,
           customer.serviceType,
           customer.notes,
+          customer.lastCounselingContent,
         ],
         keyword,
       );
@@ -562,7 +603,7 @@ export default function CustomersPage() {
 
       <div className="flex-1 overflow-auto">
         <div className="min-w-full overflow-x-auto">
-        <Table className="min-w-[640px]">
+        <Table className="min-w-[960px]">
           <TableHeader>
             <TableRow className="bg-muted/30">
               <TableHead className="w-[40px]">
@@ -572,19 +613,20 @@ export default function CustomersPage() {
                   data-testid="checkbox-select-all"
                 />
               </TableHead>
-              <SortableHeader field="name">고객명</SortableHeader>
-              <SortableHeader field="phone">전화번호</SortableHeader>
-              <SortableHeader field="customerType">고객구분</SortableHeader>
-              <SortableHeader field="customerCategory">고객유형</SortableHeader>
-              <SortableHeader field="serviceType">서비스유형</SortableHeader>
-              <SortableHeader field="createdAt">등록일</SortableHeader>
-              <TableHead className="text-xs">메모</TableHead>
+              <SortableHeader field="name">???</SortableHeader>
+              <SortableHeader field="phone">????</SortableHeader>
+              <SortableHeader field="customerType">????</SortableHeader>
+              <SortableHeader field="customerCategory">????</SortableHeader>
+              <TableHead className="whitespace-nowrap text-right text-xs">???</TableHead>
+              <TableHead className="whitespace-nowrap text-right text-xs">? ????</TableHead>
+              <TableHead className="whitespace-nowrap text-right text-xs">? ?? ??</TableHead>
+              <TableHead className="text-xs">??? ?? ??</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {paginatedCustomers.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={8} className="py-8 text-center text-muted-foreground">
+                <TableCell colSpan={9} className="py-8 text-center text-muted-foreground">
                   {search ? "검색 결과가 없습니다." : "등록된 고객이 없습니다."}
                 </TableCell>
               </TableRow>
@@ -611,9 +653,16 @@ export default function CustomersPage() {
                   <TableCell className="text-xs">{customer.phone || "-"}</TableCell>
                   <TableCell className="text-xs">{customer.customerType || "-"}</TableCell>
                   <TableCell className="text-xs">{customer.customerCategory || "-"}</TableCell>
-                  <TableCell className="text-xs">{customer.serviceType || "-"}</TableCell>
-                  <TableCell className="text-xs">{formatDate(customer.createdAt)}</TableCell>
-                  <TableCell className="text-xs">{customer.notes || "-"}</TableCell>
+                  <TableCell className="text-right text-xs">{(customerListSummaryById.get(customer.id)?.contractCount || 0).toLocaleString("ko-KR")}?</TableCell>
+                  <TableCell className="text-right text-xs">{formatCurrency(customerListSummaryById.get(customer.id)?.totalContractAmount || 0)}</TableCell>
+                  <TableCell className="text-right text-xs text-red-600">{formatCurrency(customerListSummaryById.get(customer.id)?.totalRefundAmount || 0)}</TableCell>
+                  <TableCell className="max-w-[260px] text-xs">
+                    {customer.lastCounselingContent ? (
+                      <span className="block truncate" title={customer.lastCounselingContent}>
+                        {customer.lastCounselingDate ? `${formatDate(customer.lastCounselingDate)} ` : ""}{truncatePreviewText(customer.lastCounselingContent, 40)}
+                      </span>
+                    ) : "-"}
+                  </TableCell>
                 </TableRow>
               ))
             )}
@@ -890,6 +939,7 @@ function CustomerDetailDialog({
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/customers", customerId, "counselings"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/customers"] });
       counselingForm.reset({
         counselingDate: new Date().toISOString().slice(0, 10),
         content: "",
