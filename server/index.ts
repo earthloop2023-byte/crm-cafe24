@@ -467,37 +467,15 @@ async function bootstrapApplication() {
 
 // AI SPACE health checks port 3000 unless PORT is explicitly injected.
 const port = parseInt(process.env.PORT || "3000", 10);
-let bootstrapStarted = false;
-
-function startBootstrapOnce() {
-  if (bootstrapStarted) return;
-  bootstrapStarted = true;
-  void bootstrapApplication().catch((error) => {
-    console.error("Application bootstrap failed:", error);
-  });
-}
-
-function listenOnPort(server: ReturnType<typeof createServer>, listenPort: number, label = "primary") {
-  server.on("error", (error) => {
-    console.error(`Failed to bind ${label} port ${listenPort}:`, error);
-  });
-  server.listen(
-    {
-      port: listenPort,
-      host: "0.0.0.0",
-    },
-    () => {
-      log(`serving on ${label} port ${listenPort}`);
-      startBootstrapOnce();
-    },
-  );
-}
-
-listenOnPort(httpServer, port);
-if (!process.env.PORT) {
-  for (const fallbackPort of [5000, 8000, 8080]) {
-    if (fallbackPort !== port) {
-      listenOnPort(createServer(app), fallbackPort, "fallback");
-    }
-  }
-}
+httpServer.listen(
+  {
+    port,
+    host: "0.0.0.0",
+  },
+  () => {
+    log(`serving on port ${port}`);
+    void bootstrapApplication().catch((error) => {
+      console.error("Application bootstrap failed:", error);
+    });
+  },
+);

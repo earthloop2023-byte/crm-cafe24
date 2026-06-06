@@ -1,1 +1,1 @@
-web: node dist/index.js
+web: node scripts/cafe24-start.mjs
