@@ -100,6 +100,44 @@ const localAdminUser = {
   createdAt: new Date(0),
 };
 
+function serializeKoreanDbTimestamp(value: unknown): unknown {
+  if (!value) return value;
+
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return value;
+    const pad = (part: number) => String(part).padStart(2, "0");
+    return [
+      value.getUTCFullYear(),
+      pad(value.getUTCMonth() + 1),
+      pad(value.getUTCDate()),
+    ].join("-") + `T${pad(value.getUTCHours())}:${pad(value.getUTCMinutes())}:${pad(value.getUTCSeconds())}+09:00`;
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return value;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return value;
+    if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,6})?)?Z$/i.test(trimmed)) {
+      return trimmed.replace(" ", "T").replace(/Z$/i, "+09:00");
+    }
+    if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,6})?)?$/.test(trimmed)) {
+      return `${trimmed.replace(" ", "T")}+09:00`;
+    }
+  }
+
+  return value;
+}
+
+function serializeCustomerTimeFields<T extends Record<string, any>>(row: T): T {
+  return {
+    ...row,
+    createdAt: serializeKoreanDbTimestamp(row.createdAt),
+    updatedAt: serializeKoreanDbTimestamp(row.updatedAt),
+    lastCounselingCreatedAt: serializeKoreanDbTimestamp(row.lastCounselingCreatedAt),
+    companyConvertedAt: serializeKoreanDbTimestamp(row.companyConvertedAt),
+  };
+}
+
 function isLocalAdminLogin(loginId: unknown, password: unknown): boolean {
   return !hasDatabaseConfig && String(loginId || "") === "admin" && String(password || "") === "a1234";
 }
@@ -3519,14 +3557,14 @@ export async function registerRoutes(
       res.json(
         customers.map((customer) => {
           const latestCounseling = latestCounselingByCustomerId.get(String(customer.id));
-          return {
+          return serializeCustomerTimeFields({
             ...customer,
             lastCounselingDate: latestCounseling?.lastCounselingDate ?? null,
             lastCounselingContent: latestCounseling?.content ?? null,
             lastCounselingCreatedAt: latestCounseling?.lastCounselingCreatedAt ?? null,
             counselingCount: counselingCountByCustomerId.get(String(customer.id)) ?? 0,
             companyConvertedAt: companyConvertedAtByCustomerId.get(String(customer.id)) ?? null,
-          };
+          });
         }),
       );
     } catch (error) {
@@ -3545,7 +3583,7 @@ export async function registerRoutes(
       if (isCounselorPosition(currentUser?.role) && !isCustomerLifecycleStage(customer.lifecycleStage, "lead")) {
         return res.status(403).json({ error: "상담원은 리드 정보만 조회할 수 있습니다." });
       }
-      res.json(customer);
+      res.json(serializeCustomerTimeFields(customer));
     } catch (error) {
       console.error("Error fetching customer:", error);
       res.status(500).json({ error: "Failed to fetch customer" });
@@ -3807,7 +3845,9 @@ export async function registerRoutes(
         `,
         [req.params.id],
       );
-      res.json(result.rows.map((row) => decryptRawTableRow("customer_counselings", row)));
+      res.json(
+        result.rows.map((row) => serializeCustomerTimeFields(decryptRawTableRow("customer_counselings", row))),
+      );
     } catch (error) {
       console.error("Error fetching customer counselings:", error);
       res.status(500).json({ error: "Failed to fetch customer counselings" });
@@ -3852,7 +3892,7 @@ export async function registerRoutes(
           await getCurrentUserName(req),
         ],
       );
-      res.status(201).json(decryptRawTableRow("customer_counselings", inserted.rows[0]));
+      res.status(201).json(serializeCustomerTimeFields(decryptRawTableRow("customer_counselings", inserted.rows[0])));
     } catch (error) {
       console.error("Error creating customer counseling:", error);
       res.status(500).json({ error: "Failed to create customer counseling" });
@@ -3893,7 +3933,11 @@ export async function registerRoutes(
         `,
         [req.params.id],
       );
-      res.json(result.rows.map((row) => decryptRecordFields(row, CUSTOMER_CHANGE_HISTORY_RESPONSE_PII_FIELDS)));
+      res.json(
+        result.rows.map((row) =>
+          serializeCustomerTimeFields(decryptRecordFields(row, CUSTOMER_CHANGE_HISTORY_RESPONSE_PII_FIELDS)),
+        ),
+      );
     } catch (error) {
       console.error("Error fetching customer change history:", error);
       res.status(500).json({ error: "Failed to fetch customer change history" });
@@ -3920,11 +3964,11 @@ export async function registerRoutes(
       res.json(
         result.rows.map((row) => {
           const decrypted = decryptRecordFields(row, CUSTOMER_FILE_RESPONSE_PII_FIELDS);
-          return {
+          return serializeCustomerTimeFields({
             ...decrypted,
             fileName: normalizeCustomerFileName(decrypted.fileName),
             note: typeof decrypted.note === "string" && decrypted.note.trim() ? decrypted.note.trim() : null,
-          };
+          });
         }),
       );
     } catch (error) {
@@ -3989,11 +4033,11 @@ export async function registerRoutes(
         ],
       );
       const decryptedInserted = decryptRecordFields(inserted.rows[0], CUSTOMER_FILE_RESPONSE_PII_FIELDS);
-      res.status(201).json({
+      res.status(201).json(serializeCustomerTimeFields({
         ...decryptedInserted,
         fileName: normalizeCustomerFileName(decryptedInserted?.fileName),
         note: typeof decryptedInserted?.note === "string" && decryptedInserted.note.trim() ? decryptedInserted.note.trim() : null,
-      });
+      }));
     } catch (error) {
       console.error("Error uploading customer file:", error);
       res.status(500).json({ error: "Failed to upload customer file" });
