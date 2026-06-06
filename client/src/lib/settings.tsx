@@ -101,7 +101,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
   });
 
   const settings = { ...defaultSettings, ...data };
-  const displayTimezone = settings.system_timezone || "Asia/Seoul";
+  const displayTimezone = "Asia/Seoul";
 
   const formatDate = useCallback((date: Date | string | null | undefined): string => {
     if (!date) return "-";

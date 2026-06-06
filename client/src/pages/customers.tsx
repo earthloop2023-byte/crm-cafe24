@@ -107,6 +107,7 @@ type CustomerListRow = Customer & {
   lastCounselingContent?: string | null;
   lastCounselingCreatedAt?: string | null;
   counselingCount?: number | null;
+  companyConvertedAt?: string | null;
 };
 
 type CustomerListSummary = {
@@ -759,7 +760,7 @@ export default function CustomersPage({ mode = "lead" }: { mode?: CustomerPageMo
               {isLeadMode ? <TableHead className="whitespace-nowrap text-right text-xs">상담 건수</TableHead> : null}
               <TableHead className="text-xs">마지막 상담 이력</TableHead>
               <TableHead className="whitespace-nowrap text-xs">{isLeadMode ? "등록자" : "담당자"}</TableHead>
-              <SortableHeader field="createdAt">등록시간</SortableHeader>
+              <SortableHeader field="createdAt">{isLeadMode ? "등록시간" : "고객사 전환시간"}</SortableHeader>
               {isLeadMode ? <TableHead className="whitespace-nowrap text-right text-xs">관리</TableHead> : null}
             </TableRow>
           </TableHeader>
@@ -808,7 +809,9 @@ export default function CustomersPage({ mode = "lead" }: { mode?: CustomerPageMo
                     ) : "-"}
                   </TableCell>
                   <TableCell className="text-xs whitespace-nowrap">{isLeadMode ? customer.createdByName || "-" : customer.managerName || "-"}</TableCell>
-                  <TableCell className="text-xs whitespace-nowrap">{formatDateTime(customer.createdAt)}</TableCell>
+                  <TableCell className="text-xs whitespace-nowrap">
+                    {formatDateTime(isLeadMode ? customer.createdAt : customer.companyConvertedAt || customer.createdAt)}
+                  </TableCell>
                   {isLeadMode ? (
                     <TableCell className="text-right">
                       <Button
@@ -990,6 +993,13 @@ function CustomerDetailDialog({
     queryKey: ["/api/customers", customerId, "change-history"],
     enabled: open && isEditMode,
   });
+
+  const companyConvertedAt = useMemo(() => {
+    const converted = changeHistory
+      .filter((row) => row.changeType === "convert_to_company")
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
+    return converted?.createdAt || customer?.createdAt;
+  }, [changeHistory, customer?.createdAt]);
 
   const { data: customerFiles = [], isLoading: filesLoading } = useQuery<CustomerFile[]>({
     queryKey: ["/api/customers", customerId, "files"],
@@ -1337,8 +1347,8 @@ function CustomerDetailDialog({
                   <span className="ml-2">{isLeadMode ? customer?.createdByName || "-" : customer?.managerName || "-"}</span>
                 </div>
                 <div>
-                  <span className="font-medium text-foreground">등록시간</span>
-                  <span className="ml-2">{formatDateTime(customer?.createdAt)}</span>
+                  <span className="font-medium text-foreground">{isLeadMode ? "등록시간" : "고객사 전환시간"}</span>
+                  <span className="ml-2">{formatDateTime(isLeadMode ? customer?.createdAt : companyConvertedAt)}</span>
                 </div>
               </div>
             ) : null}
@@ -1617,17 +1627,6 @@ function CustomerDetailDialog({
 
                   <Card className="rounded-none">
                     <CardHeader className="pb-2">
-                      <CardTitle className="text-xs font-medium text-muted-foreground">환불금액</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <p className="text-lg font-semibold text-red-600" data-testid="text-summary-refund-amount">
-                        {formatCurrency(summary.refundAmount)}
-                      </p>
-                    </CardContent>
-                  </Card>
-
-                  <Card className="rounded-none">
-                    <CardHeader className="pb-2">
                       <CardTitle className="text-xs font-medium text-muted-foreground">입금금액</CardTitle>
                     </CardHeader>
                     <CardContent>
@@ -1644,6 +1643,17 @@ function CustomerDetailDialog({
                     <CardContent>
                       <p className="text-lg font-semibold text-red-600" data-testid="text-summary-receivable-amount">
                         {formatCurrency(summary.receivableAmount)}
+                      </p>
+                    </CardContent>
+                  </Card>
+
+                  <Card className="rounded-none">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-xs font-medium text-muted-foreground">환불금액</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <p className="text-lg font-semibold text-red-600" data-testid="text-summary-refund-amount">
+                        {formatCurrency(summary.refundAmount)}
                       </p>
                     </CardContent>
                   </Card>

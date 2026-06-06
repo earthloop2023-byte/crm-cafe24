@@ -3471,6 +3471,7 @@ export async function registerRoutes(
 
       const latestCounselingByCustomerId = new Map<string, any>();
       const counselingCountByCustomerId = new Map<string, number>();
+      const companyConvertedAtByCustomerId = new Map<string, Date | string>();
       try {
         await ensureCustomerDetailTables();
         const counselingResult = await pool.query(
@@ -3498,6 +3499,19 @@ export async function registerRoutes(
         counselingCountResult.rows.forEach((row) => {
           counselingCountByCustomerId.set(String(row.customerId), Number(row.counselingCount) || 0);
         });
+        const convertedAtResult = await pool.query(
+          `
+            SELECT customer_id AS "customerId", MAX(created_at) AS "companyConvertedAt"
+            FROM customer_change_histories
+            WHERE change_type = 'convert_to_company'
+            GROUP BY customer_id
+          `,
+        );
+        convertedAtResult.rows.forEach((row) => {
+          if (row.companyConvertedAt) {
+            companyConvertedAtByCustomerId.set(String(row.customerId), row.companyConvertedAt);
+          }
+        });
       } catch (counselingError) {
         console.warn("Customer latest counseling data skipped:", counselingError);
       }
@@ -3511,6 +3525,7 @@ export async function registerRoutes(
             lastCounselingContent: latestCounseling?.content ?? null,
             lastCounselingCreatedAt: latestCounseling?.lastCounselingCreatedAt ?? null,
             counselingCount: counselingCountByCustomerId.get(String(customer.id)) ?? 0,
+            companyConvertedAt: companyConvertedAtByCustomerId.get(String(customer.id)) ?? null,
           };
         }),
       );
