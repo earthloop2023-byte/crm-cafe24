@@ -101,27 +101,28 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
   });
 
   const settings = { ...defaultSettings, ...data };
+  const displayTimezone = settings.system_timezone || "Asia/Seoul";
 
   const formatDate = useCallback((date: Date | string | null | undefined): string => {
     if (!date) return "-";
     const d = typeof date === "string" ? new Date(date) : date;
     if (isNaN(d.getTime())) return "-";
-    return applyDateFormat(d, settings.system_date_format, settings.system_timezone);
-  }, [settings.system_date_format, settings.system_timezone]);
+    return applyDateFormat(d, settings.system_date_format, displayTimezone);
+  }, [settings.system_date_format, displayTimezone]);
 
   const formatDateTime = useCallback((date: Date | string | null | undefined): string => {
     if (!date) return "-";
     const d = typeof date === "string" ? new Date(date) : date;
     if (isNaN(d.getTime())) return "-";
-    return applyDateTimeFormat(d, settings.system_date_format, settings.system_timezone);
-  }, [settings.system_date_format, settings.system_timezone]);
+    return applyDateTimeFormat(d, settings.system_date_format, displayTimezone);
+  }, [settings.system_date_format, displayTimezone]);
 
   const formatTime = useCallback((date: Date | string | null | undefined): string => {
     if (!date) return "-";
     const d = typeof date === "string" ? new Date(date) : date;
     if (isNaN(d.getTime())) return "-";
-    return applyTimeFormat(d, settings.system_timezone);
-  }, [settings.system_timezone]);
+    return applyTimeFormat(d, displayTimezone);
+  }, [displayTimezone]);
 
   return (
     <SettingsContext.Provider value={{ settings, formatDate, formatDateTime, formatTime }}>

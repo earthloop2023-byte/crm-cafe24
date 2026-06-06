@@ -64,7 +64,7 @@ export default function DepositConfirmationsPage() {
     ["경영지원팀", "개발팀", "연구개발팀"].includes((user?.department || "").trim()) ||
     ["대표이사", "총괄이사", "개발자"].includes((user?.role || "").trim());
   const showDepositActionDeniedMessage = () => {
-    toast({ title: "입금확인 등록, 엑셀 업로드, 수정, 삭제는 경영지원팀/개발팀 또는 대표이사/총괄이사/개발자만 가능합니다.", variant: "destructive" });
+    toast({ title: "입금완료 등록, 엑셀 업로드, 수정, 삭제는 경영지원팀/개발팀 또는 대표이사/총괄이사/개발자만 가능합니다.", variant: "destructive" });
   };
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -726,7 +726,7 @@ export default function DepositConfirmationsPage() {
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-3">
           <Landmark className="w-6 h-6 text-primary" />
-          <h1 className="text-2xl font-bold" data-testid="text-page-title">입금확인 목록</h1>
+          <h1 className="text-2xl font-bold" data-testid="text-page-title">입금완료 목록</h1>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
           <span className="text-sm text-muted-foreground">
@@ -764,7 +764,7 @@ export default function DepositConfirmationsPage() {
             onClick={() => fileInputRef.current?.click()}
             disabled={!hasDepositActionAccess || uploadMutation.isPending}
             data-testid="button-excel-upload"
-            title="입금확인 업로드 v20260403"
+            title="입금완료 업로드 v20260403"
           >
             <Upload className="w-4 h-4" />
             {uploadMutation.isPending ? "업로드 중..." : "엑셀 업로드"}

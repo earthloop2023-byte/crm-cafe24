@@ -50,6 +50,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth";
 import { useSettings } from "@/lib/settings";
+import { getKoreanDateKey, getKoreanNow } from "@/lib/korean-time";
 import { insertCustomerSchema } from "@shared/schema";
 import type {
   Customer,
@@ -104,6 +105,7 @@ type CustomerListRow = Customer & {
   lastCounselingDate?: string | null;
   lastCounselingContent?: string | null;
   lastCounselingCreatedAt?: string | null;
+  counselingCount?: number | null;
 };
 
 type CustomerListSummary = {
@@ -161,6 +163,33 @@ function normalizeLeadCategory(value?: string | null): string {
 function normalizeOptional(value?: string | null): string | null {
   const trimmed = (value ?? "").trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizeDuplicateName(value: unknown): string {
+  return String(value ?? "").trim().replace(/\s+/g, "").toLowerCase();
+}
+
+function normalizeDuplicatePhone(value: unknown): string {
+  return String(value ?? "").replace(/\D/g, "");
+}
+
+function findDuplicateCustomer(
+  customers: Customer[],
+  payload: { name?: unknown; phone?: unknown },
+  excludeCustomerId?: string,
+) {
+  const nameKey = normalizeDuplicateName(payload.name);
+  const phoneKey = normalizeDuplicatePhone(payload.phone);
+  if (!nameKey && !phoneKey) return undefined;
+
+  return customers.find((customer) => {
+    if (excludeCustomerId && customer.id === excludeCustomerId) return false;
+    const existingNameKey = normalizeDuplicateName(customer.name);
+    const existingPhoneKey = normalizeDuplicatePhone(customer.phone);
+    const samePhone = !!phoneKey && !!existingPhoneKey && phoneKey === existingPhoneKey;
+    const sameName = !!nameKey && !!existingNameKey && nameKey === existingNameKey;
+    return samePhone || (!phoneKey && sameName) || (sameName && !!existingPhoneKey && existingPhoneKey === phoneKey);
+  });
 }
 
 function toNumber(value: unknown): number {
@@ -363,9 +392,13 @@ function isLeadCustomer(customer: Customer) {
   return customer.lifecycleStage === "lead";
 }
 
+function getKoreanTodayKey(): string {
+  return getKoreanDateKey(getKoreanNow());
+}
+
 export default function CustomersPage({ mode = "lead" }: { mode?: CustomerPageMode }) {
   const { toast } = useToast();
-  const { formatDate } = useSettings();
+  const { formatDate, formatDateTime } = useSettings();
   const { user: currentUser } = useAuth();
   const [, setLocation] = useLocation();
   const [search, setSearch] = useState("");
@@ -670,7 +703,7 @@ export default function CustomersPage({ mode = "lead" }: { mode?: CustomerPageMo
       </div>
 
       <div className="overflow-x-auto border border-border bg-background">
-        <Table className="w-full min-w-[1100px]">
+        <Table className="w-full min-w-[1280px]">
           <TableHeader>
             <TableRow className="bg-muted/30">
               <TableHead className="w-[40px]">
@@ -685,17 +718,20 @@ export default function CustomersPage({ mode = "lead" }: { mode?: CustomerPageMo
               <SortableHeader field="phone">전화번호</SortableHeader>
               <SortableHeader field="customerType">고객구분</SortableHeader>
               <SortableHeader field="customerCategory">고객유형</SortableHeader>
-              <TableHead className="whitespace-nowrap text-right text-xs">계약수</TableHead>
-              <TableHead className="whitespace-nowrap text-right text-xs">총 계약금액</TableHead>
-              <TableHead className="whitespace-nowrap text-right text-xs">총 환불 금액</TableHead>
+              {!isLeadMode ? <TableHead className="whitespace-nowrap text-right text-xs">계약수</TableHead> : null}
+              {!isLeadMode ? <TableHead className="whitespace-nowrap text-right text-xs">총 계약금액</TableHead> : null}
+              {!isLeadMode ? <TableHead className="whitespace-nowrap text-right text-xs">총 환불 금액</TableHead> : null}
+              {isLeadMode ? <TableHead className="whitespace-nowrap text-right text-xs">상담 건수</TableHead> : null}
               <TableHead className="text-xs">마지막 상담 이력</TableHead>
+              <TableHead className="whitespace-nowrap text-xs">등록자</TableHead>
+              <SortableHeader field="createdAt">등록시간</SortableHeader>
               {isLeadMode ? <TableHead className="whitespace-nowrap text-right text-xs">관리</TableHead> : null}
             </TableRow>
           </TableHeader>
           <TableBody>
             {paginatedCustomers.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={isLeadMode ? 10 : 9} className="py-8 text-center text-muted-foreground">
+                <TableCell colSpan={isLeadMode ? 10 : 11} className="py-8 text-center text-muted-foreground">
                   {search ? "검색 결과가 없습니다." : `등록된 ${noun}이 없습니다.`}
                 </TableCell>
               </TableRow>
@@ -725,9 +761,10 @@ export default function CustomersPage({ mode = "lead" }: { mode?: CustomerPageMo
                   <TableCell className="text-xs">
                     {isLeadMode ? normalizeLeadCategory(customer.customerCategory) : customer.customerCategory || "-"}
                   </TableCell>
-                  <TableCell className="text-right text-xs">{(customerListSummaryById.get(customer.id)?.contractCount || 0).toLocaleString("ko-KR")}건</TableCell>
-                  <TableCell className="text-right text-xs">{formatCurrency(customerListSummaryById.get(customer.id)?.totalContractAmount || 0)}</TableCell>
-                  <TableCell className="text-right text-xs text-red-600">{formatCurrency(customerListSummaryById.get(customer.id)?.totalRefundAmount || 0)}</TableCell>
+                  {!isLeadMode ? <TableCell className="text-right text-xs">{(customerListSummaryById.get(customer.id)?.contractCount || 0).toLocaleString("ko-KR")}건</TableCell> : null}
+                  {!isLeadMode ? <TableCell className="text-right text-xs">{formatCurrency(customerListSummaryById.get(customer.id)?.totalContractAmount || 0)}</TableCell> : null}
+                  {!isLeadMode ? <TableCell className="text-right text-xs text-red-600">{formatCurrency(customerListSummaryById.get(customer.id)?.totalRefundAmount || 0)}</TableCell> : null}
+                  {isLeadMode ? <TableCell className="text-right text-xs">{Number(customer.counselingCount || 0).toLocaleString("ko-KR")}건</TableCell> : null}
                   <TableCell className="max-w-[260px] text-xs">
                     {customer.lastCounselingContent ? (
                       <span className="block truncate" title={customer.lastCounselingContent}>
@@ -735,6 +772,8 @@ export default function CustomersPage({ mode = "lead" }: { mode?: CustomerPageMo
                       </span>
                     ) : "-"}
                   </TableCell>
+                  <TableCell className="text-xs whitespace-nowrap">{customer.createdByName || "-"}</TableCell>
+                  <TableCell className="text-xs whitespace-nowrap">{formatDateTime(customer.createdAt)}</TableCell>
                   {isLeadMode ? (
                     <TableCell className="text-right">
                       <Button
@@ -782,6 +821,7 @@ export default function CustomersPage({ mode = "lead" }: { mode?: CustomerPageMo
       <CustomerDetailDialog
         open={isDialogOpen}
         customer={editingCustomer}
+        customers={customers}
         mode={mode}
         onOpenChange={(nextOpen) => {
           if (!nextOpen) {
@@ -799,12 +839,14 @@ export default function CustomersPage({ mode = "lead" }: { mode?: CustomerPageMo
 function CustomerDetailDialog({
   open,
   customer,
+  customers,
   mode,
   onOpenChange,
   onSaved,
 }: {
   open: boolean;
   customer?: Customer;
+  customers: Customer[];
   mode: CustomerPageMode;
   onOpenChange: (open: boolean) => void;
   onSaved: () => void;
@@ -843,7 +885,7 @@ function CustomerDetailDialog({
   const counselingForm = useForm<CounselingFormData>({
     resolver: zodResolver(counselingFormSchema),
     defaultValues: {
-      counselingDate: new Date().toISOString().slice(0, 10),
+      counselingDate: getKoreanTodayKey(),
       content: "",
     },
   });
@@ -862,7 +904,7 @@ function CustomerDetailDialog({
       notes: customer?.notes || "",
     });
     counselingForm.reset({
-      counselingDate: new Date().toISOString().slice(0, 10),
+      counselingDate: getKoreanTodayKey(),
       content: "",
     });
     setSelectedFile(null);
@@ -1019,6 +1061,12 @@ function CustomerDetailDialog({
         lifecycleStage: isLeadMode ? "lead" : "customer",
       };
 
+      const duplicate = findDuplicateCustomer(customers, payload, isEditMode ? customerId : undefined);
+      if (duplicate) {
+        const duplicateType = duplicate.lifecycleStage === "lead" ? "리드" : "고객사";
+        throw new Error(`이미 등록된 ${duplicateType}입니다. (${duplicate.name || "이름 없음"} / ${duplicate.phone || "전화번호 없음"})`);
+      }
+
       if (isEditMode) {
         await apiRequest("PUT", `/api/customers/${customerId}`, payload);
         return "update";
@@ -1063,7 +1111,7 @@ function CustomerDetailDialog({
       queryClient.invalidateQueries({ queryKey: ["/api/customers", customerId, "counselings"] });
       queryClient.invalidateQueries({ queryKey: ["/api/customers"] });
       counselingForm.reset({
-        counselingDate: new Date().toISOString().slice(0, 10),
+        counselingDate: getKoreanTodayKey(),
         content: "",
       });
       toast({ title: `${noun} 상담 내용이 등록되었습니다.` });
@@ -1219,6 +1267,18 @@ function CustomerDetailDialog({
           </TabsList>
 
           <TabsContent value="basic" className="space-y-4">
+            {isEditMode ? (
+              <div className="grid gap-2 border border-border bg-muted/20 p-3 text-xs text-muted-foreground sm:grid-cols-2">
+                <div>
+                  <span className="font-medium text-foreground">등록자</span>
+                  <span className="ml-2">{customer?.createdByName || "-"}</span>
+                </div>
+                <div>
+                  <span className="font-medium text-foreground">등록시간</span>
+                  <span className="ml-2">{formatDateTime(customer?.createdAt)}</span>
+                </div>
+              </div>
+            ) : null}
             <Form {...form}>
               <form onSubmit={form.handleSubmit(handleSaveCustomer)} className="space-y-4">
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -1405,7 +1465,7 @@ function CustomerDetailDialog({
                             </SelectTrigger>
                           </FormControl>
                           <SelectContent className="rounded-none">
-                            <SelectItem value={SELECT_NONE_VALUE}>선택 안함</SelectItem>
+                            {!isLeadMode ? <SelectItem value={SELECT_NONE_VALUE}>선택 안함</SelectItem> : null}
                             <SelectItem value={isLeadMode ? LEAD_CATEGORY_DEFAULT : "고객사"}>{isLeadMode ? LEAD_CATEGORY_DEFAULT : "고객사"}</SelectItem>
                             <SelectItem value="대행사">대행사</SelectItem>
                             <SelectItem value="총판">총판</SelectItem>
@@ -1621,17 +1681,16 @@ function CustomerDetailDialog({
                         <Table>
                           <TableHeader>
                             <TableRow>
-                              <TableHead>일자</TableHead>
+                              <TableHead>등록시각</TableHead>
                               <TableHead>내용</TableHead>
                               <TableHead>등록자</TableHead>
-                              <TableHead>등록시각</TableHead>
                               <TableHead className="w-[80px] text-right">관리</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
                             {counselingHistory.map((row) => (
                               <TableRow key={row.id}>
-                                <TableCell className="text-xs">{formatDate(row.counselingDate)}</TableCell>
+                                <TableCell className="text-xs whitespace-nowrap">{formatDateTime(row.createdAt)}</TableCell>
                                 <TableCell className="text-xs max-w-[320px]">
                                   {row.content.trim().length > 60 || row.content.includes("\n") ? (
                                     <Popover>
@@ -1661,7 +1720,6 @@ function CustomerDetailDialog({
                                   )}
                                 </TableCell>
                                 <TableCell className="text-xs">{row.createdBy || "-"}</TableCell>
-                                <TableCell className="text-xs">{formatDateTime(row.createdAt)}</TableCell>
                                 <TableCell className="text-right">
                                   <Button
                                     variant="ghost"

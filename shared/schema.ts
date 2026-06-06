@@ -43,6 +43,8 @@ export const customers = pgTable("customers", {
   lifecycleStage: text("lifecycle_stage").notNull().default("customer"),
   keepBalanceAdjustment: integer("keep_balance_adjustment").notNull().default(0),
   notes: text("notes"),
+  createdByName: text("created_by_name"),
+  createdByUserId: varchar("created_by_user_id").references(() => users.id),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -337,7 +339,7 @@ export const contracts = pgTable("contracts", {
   workCost: integer("work_cost").default(0),
   notes: text("notes"),
   disbursementStatus: text("disbursement_status"),
-  executionPaymentStatus: text("execution_payment_status").default("입금전"),
+  executionPaymentStatus: text("execution_payment_status").default("입금예정"),
   userIdentifier: text("user_identifier"),
   productDetailsJson: text("product_details_json"),
   contractType: text("contract_type"),
@@ -629,7 +631,7 @@ export const allPages = [
   { key: "payments", label: "매출관리", path: "/payments" },
   { key: "refunds", label: "환불관리", path: "/refunds" },
   { key: "receivables", label: "미수금관리", path: "/receivables" },
-  { key: "deposit_confirmations", label: "입금확인", path: "/deposit-confirmations" },
+  { key: "deposit_confirmations", label: "입금완료", path: "/deposit-confirmations" },
   { key: "notice", label: "공지사항", path: "/notice" },
   { key: "users", label: "사용자관리", path: "/settings/users" },
   { key: "system_logs", label: "시스템로그", path: "/settings/logs" },
@@ -679,8 +681,8 @@ export const positionDefaultPages: Record<string, string[]> = {
 };
 
 export const departmentDefaultPages: Record<string, string[]> = {
-  "마케팅 영업팀": ["contracts", "customers", "deposit_confirmations", "products", "sales_analytics", "notice"],
-  "마케팅 기획팀": ["contracts", "customers", "deposit_confirmations", "products", "sales_analytics", "notice"],
+  "마케팅영업팀": ["contracts", "customers", "deposit_confirmations", "products", "sales_analytics", "notice"],
+  "마케팅기획팀": ["contracts", "customers", "deposit_confirmations", "products", "sales_analytics", "notice"],
   "연구개발팀": allPages.map((page) => page.key),
   "마케팅팀": ["contracts", "customers", "deposit_confirmations", "products", "sales_analytics", "notice"],
   "경영지원팀": ["sales_analytics", "payments", "receivables", "deposit_confirmations", "notice"],

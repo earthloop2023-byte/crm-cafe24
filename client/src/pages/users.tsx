@@ -43,7 +43,7 @@ import type { User } from "@shared/schema";
 
 const EXECUTIVE_DEPARTMENT = "\uACBD\uC601\uC9C4";
 const MANAGEMENT_ROLES = ["대표", "이사", "\uB300\uD45C\uC774\uC0AC", "\uCD1D\uAD04\uC774\uC0AC", "\uAC1C\uBC1C\uC790"];
-const departmentOptions = ["경영진", "경영지원팀", "마케팅 영업팀", "마케팅 기획팀", "연구개발팀"];
+const departmentOptions = ["경영진", "경영지원팀", "마케팅영업팀", "마케팅기획팀", "연구개발팀"];
 const WORK_STATUS_EMPLOYED = "\uC7AC\uC9C1\uC911";
 const WORK_STATUS_ON_LEAVE = "\uD734\uC9C1\uC911";
 const WORK_STATUS_RESIGNED = "\uD1F4\uC0AC";

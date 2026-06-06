@@ -336,7 +336,9 @@ async function ensureCustomerKeepColumns() {
   await pool.query(`
     ALTER TABLE customers
     ADD COLUMN IF NOT EXISTS keep_balance_adjustment integer NOT NULL DEFAULT 0,
-    ADD COLUMN IF NOT EXISTS lifecycle_stage text NOT NULL DEFAULT 'customer'
+    ADD COLUMN IF NOT EXISTS lifecycle_stage text NOT NULL DEFAULT 'customer',
+    ADD COLUMN IF NOT EXISTS created_by_name text,
+    ADD COLUMN IF NOT EXISTS created_by_user_id varchar
   `);
 }
 
@@ -372,6 +374,19 @@ async function ensureCustomerLifecycleSeedData() {
     `,
     ["테스트", "김상만"],
   );
+}
+
+async function ensureDepartmentNameSpacing() {
+  const legacyMarketingSalesDepartment = `마케팅 ${"영업팀"}`;
+  const legacyMarketingPlanningDepartment = `마케팅 ${"기획팀"}`;
+  await db
+    .update(users)
+    .set({ department: "마케팅영업팀" })
+    .where(eq(users.department, legacyMarketingSalesDepartment));
+  await db
+    .update(users)
+    .set({ department: "마케팅기획팀" })
+    .where(eq(users.department, legacyMarketingPlanningDepartment));
 }
 
 async function ensureContractColumns() {
@@ -620,6 +635,39 @@ function normalizeLeadCustomerPayload(body: Record<string, any>) {
     body.serviceType = null;
   }
   return body;
+}
+
+function normalizeDuplicateName(value: unknown) {
+  return String(value ?? "").trim().replace(/\s+/g, "").toLowerCase();
+}
+
+function normalizeDuplicatePhone(value: unknown) {
+  return String(value ?? "").replace(/\D/g, "");
+}
+
+async function findLeadCustomerDuplicate(
+  payload: { name?: unknown; phone?: unknown },
+  excludeCustomerId?: string | null,
+) {
+  const nameKey = normalizeDuplicateName(payload.name);
+  const phoneKey = normalizeDuplicatePhone(payload.phone);
+  if (!nameKey && !phoneKey) return null;
+
+  const existingCustomers = await storage.getCustomers();
+  return existingCustomers.find((customer) => {
+    if (excludeCustomerId && String(customer.id) === String(excludeCustomerId)) return false;
+    const existingNameKey = normalizeDuplicateName(customer.name);
+    const existingPhoneKey = normalizeDuplicatePhone(customer.phone);
+    const hasSamePhone = !!phoneKey && !!existingPhoneKey && existingPhoneKey === phoneKey;
+    const hasSameName = !!nameKey && !!existingNameKey && existingNameKey === nameKey;
+    return hasSamePhone || (!phoneKey && hasSameName) || (hasSameName && !!existingPhoneKey && existingPhoneKey === phoneKey);
+  }) || null;
+}
+
+function duplicateLeadCustomerMessage(duplicate: { lifecycleStage?: string | null; name?: string | null; phone?: string | null }) {
+  const type = isCustomerLifecycleStage(duplicate.lifecycleStage, "lead") ? "리드" : "고객사";
+  const phone = String(duplicate.phone || "").trim() || "전화번호 없음";
+  return `이미 등록된 ${type}입니다. (${duplicate.name || "이름 없음"} / ${phone})`;
 }
 
 async function getSessionUser(req: Request) {
@@ -1319,9 +1367,9 @@ function vatTypeFromInvoiceIssued(value: string | null | undefined): "부가세�
   return issued ? "부가세포함" : "부가세별도";
 }
 
-const PAYMENT_METHOD_BEFORE_DEPOSIT = "입금 전";
+const PAYMENT_METHOD_BEFORE_DEPOSIT = "입금예정";
 const PAYMENT_METHOD_REFUND_REQUEST = "환불요청";
-const PAYMENT_METHOD_DEPOSIT_CONFIRMED = "입금확인";
+const PAYMENT_METHOD_DEPOSIT_CONFIRMED = "입금완료";
 const PAYMENT_METHOD_OTHER = "기타";
 const REFUND_STATUS_PENDING = "환불대기";
 const REFUND_STATUS_REQUESTED = "환불요청";
@@ -1361,6 +1409,7 @@ function normalizeContractPaymentMethod(value: unknown): string {
   ) return PAYMENT_METHOD_OTHER;
   if (
     normalized === PAYMENT_METHOD_DEPOSIT_CONFIRMED ||
+    normalized === "입금확인" ||
     normalized === "입금완료" ||
     normalized === "국민은행" ||
     normalized === "카드결제" ||
@@ -1448,7 +1497,7 @@ async function upsertAutoDepositConfirmationFromContract(contract: Contract, con
 
   const created = await storage.createDeposit({
     ...payload,
-    notes: payload.notes || "계약관리 입금확인 자동 매핑",
+    notes: payload.notes || "계약관리 입금완료 자동 매핑",
   });
   await unmarkContractDepositDeleted(contract.id);
   return created;
@@ -2640,7 +2689,7 @@ function buildRefundContractPayload(
     workCost: negativeRefundWorkCost,
     notes: noteParts.join(" / "),
     disbursementStatus: "",
-    executionPaymentStatus: "입금전",
+    executionPaymentStatus: "입금예정",
     userIdentifier,
     productDetailsJson,
     contractType: CONTRACT_TYPE_REFUND,
@@ -2741,6 +2790,7 @@ export async function registerRoutes(
     await ensureRegionalCustomerListTable();
     await ensureCustomerKeepColumns();
     await ensureCustomerLifecycleSeedData();
+    await ensureDepartmentNameSpacing();
     await ensureProductColumns();
     await ensureContractColumns();
     await ensureFinancialHistoryColumns();
@@ -2998,7 +3048,7 @@ export async function registerRoutes(
       DEPOSIT_ACTION_ALLOWED_DEPARTMENTS.has(userDepartment) ||
       PERMISSION_ADMIN_ROLES.includes(userRole);
     if (!canManageDeposits) {
-      return res.status(403).json({ error: "입금확인 등록, 엑셀 업로드, 수정, 삭제는 경영지원팀/개발팀 또는 대표이사/총괄이사/개발자만 가능합니다." });
+      return res.status(403).json({ error: "입금완료 등록, 엑셀 업로드, 수정, 삭제는 경영지원팀/개발팀 또는 대표이사/총괄이사/개발자만 가능합니다." });
     }
 
     next();
@@ -3402,6 +3452,7 @@ export async function registerRoutes(
       }
 
       const latestCounselingByCustomerId = new Map<string, any>();
+      const counselingCountByCustomerId = new Map<string, number>();
       try {
         await ensureCustomerDetailTables();
         const counselingResult = await pool.query(
@@ -3419,6 +3470,16 @@ export async function registerRoutes(
           const decrypted = decryptRawTableRow("customer_counselings", row);
           latestCounselingByCustomerId.set(String(decrypted.customerId), decrypted);
         });
+        const counselingCountResult = await pool.query(
+          `
+            SELECT customer_id AS "customerId", COUNT(*)::int AS "counselingCount"
+            FROM customer_counselings
+            GROUP BY customer_id
+          `,
+        );
+        counselingCountResult.rows.forEach((row) => {
+          counselingCountByCustomerId.set(String(row.customerId), Number(row.counselingCount) || 0);
+        });
       } catch (counselingError) {
         console.warn("Customer latest counseling data skipped:", counselingError);
       }
@@ -3431,6 +3492,7 @@ export async function registerRoutes(
             lastCounselingDate: latestCounseling?.lastCounselingDate ?? null,
             lastCounselingContent: latestCounseling?.content ?? null,
             lastCounselingCreatedAt: latestCounseling?.lastCounselingCreatedAt ?? null,
+            counselingCount: counselingCountByCustomerId.get(String(customer.id)) ?? 0,
           };
         }),
       );
@@ -3474,6 +3536,12 @@ export async function registerRoutes(
       if (!parsed.success) {
         return res.status(400).json({ error: "Invalid customer data", details: parsed.error });
       }
+      const duplicate = await findLeadCustomerDuplicate(parsed.data);
+      if (duplicate) {
+        return res.status(409).json({ error: duplicateLeadCustomerMessage(duplicate) });
+      }
+      parsed.data.createdByName = currentUser?.name || "system";
+      parsed.data.createdByUserId = currentUser?.id || null;
       const customer = await storage.createCustomer(parsed.data);
       res.status(201).json(customer);
     } catch (error) {
@@ -3519,6 +3587,17 @@ export async function registerRoutes(
       }
       if (isCompanyCustomer && !isAdminUser && parsed.data.lifecycleStage === "lead") {
         return res.status(403).json({ error: "고객사는 리드로 되돌릴 수 없습니다." });
+      }
+
+      const duplicate = await findLeadCustomerDuplicate(
+        {
+          name: parsed.data.name ?? beforeCustomer.name,
+          phone: parsed.data.phone ?? beforeCustomer.phone,
+        },
+        req.params.id,
+      );
+      if (duplicate) {
+        return res.status(409).json({ error: duplicateLeadCustomerMessage(duplicate) });
       }
 
       const customer = await storage.updateCustomer(req.params.id, parsed.data);
@@ -4875,9 +4954,7 @@ export async function registerRoutes(
         page,
         pageSize,
         search: search || undefined,
-        managerName: isManagerPosition(currentUser?.role)
-          ? currentUser?.name || undefined
-          : managerName && managerName !== "all" ? managerName : undefined,
+        managerName: managerName && managerName !== "all" ? managerName : undefined,
         customerName: customerName && customerName !== "all" ? customerName : undefined,
         productCategory: productCategory && productCategory !== "all" ? productCategory : undefined,
         paymentMethod: paymentMethod && paymentMethod !== "all" ? paymentMethod : undefined,
@@ -4905,10 +4982,7 @@ export async function registerRoutes(
         return res.json([]);
       }
       const contracts = await storage.getContracts();
-      const filteredContracts = isManagerPosition(currentUser?.role)
-        ? contracts.filter((contract) => isOwnManagedRecord(currentUser!, contract))
-        : contracts;
-      res.json(filteredContracts.map((contract) => sanitizeFinancialContractRow(contract as any, currentUser?.role)));
+      res.json(contracts.map((contract) => sanitizeFinancialContractRow(contract as any, currentUser?.role)));
     } catch (error) {
       console.error("Error fetching contracts:", error);
       res.status(500).json({ error: "Failed to fetch contracts" });
@@ -4963,7 +5037,7 @@ export async function registerRoutes(
 
       await writeSystemLog(req, {
         actionType: "contract_update",
-        action: "계약 결제확인 일괄변경: 입금확인",
+        action: "계약 결제확인 일괄변경: 입금완료",
         details: `updated=${updatedCount}, ids=${uniqueIds.join(",")}`,
       });
 
@@ -5247,7 +5321,7 @@ export async function registerRoutes(
         return res.status(409).json({ error: "환불 내역이 매칭된 계약은 삭제할 수 없습니다. 환불관리에서 먼저 철회해주세요." });
       }
       if (depositMatched || paymentConfirmed) {
-        return res.status(409).json({ error: "입금확인 또는 입금 매칭된 계약은 삭제할 수 없습니다." });
+        return res.status(409).json({ error: "입금완료 또는 입금 매칭된 계약은 삭제할 수 없습니다." });
       }
 
       await storage.deleteContract(contractId);
@@ -5272,10 +5346,7 @@ export async function registerRoutes(
         return res.json([]);
       }
       const data = await storage.getContractsWithFinancials();
-      const filteredData = isManagerPosition(currentUser?.role)
-        ? data.filter((contract) => isOwnManagedRecord(currentUser!, contract))
-        : data;
-      res.json(filteredData.map((contract) => sanitizeFinancialContractRow(contract as any, currentUser?.role)));
+      res.json(data.map((contract) => sanitizeFinancialContractRow(contract as any, currentUser?.role)));
     } catch (error) {
       console.error("Error fetching contracts with financials:", error);
       res.status(500).json({ error: "Failed to fetch contracts with financials" });
@@ -5434,7 +5505,7 @@ export async function registerRoutes(
         normalizeContractPaymentMethod(refundContract.paymentMethod) === PAYMENT_METHOD_DEPOSIT_CONFIRMED;
 
       if (depositMatched || paymentConfirmed) {
-        return res.status(409).json({ error: "입금확인 또는 입금 매칭된 환불 내역은 철회할 수 없습니다." });
+        return res.status(409).json({ error: "입금완료 또는 입금 매칭된 환불 내역은 철회할 수 없습니다." });
       }
 
       await storage.deleteContract(refundContractId);
@@ -5691,7 +5762,7 @@ export async function registerRoutes(
       }
       await writeSystemLog(req, {
         actionType: "excel_upload",
-        action: "입금확인 엑셀 업로드",
+        action: "입금완료 엑셀 업로드",
         details: `file=${req.file.originalname}, rows=${rows.length}, imported=${created.length}`,
       });
       res.json({ count: created.length, deposits: created });
@@ -5718,7 +5789,7 @@ export async function registerRoutes(
           DEPOSIT_ACTION_ALLOWED_DEPARTMENTS.has(userDepartment) ||
           PERMISSION_ADMIN_ROLES.includes(userRole);
         if (!canManageDeposits) {
-          return res.status(403).json({ error: "입금확인 등록, 엑셀 업로드, 수정, 삭제는 경영지원팀 또는 대표이사/총괄이사/개발자만 가능합니다." });
+          return res.status(403).json({ error: "입금완료 등록, 엑셀 업로드, 수정, 삭제는 경영지원팀 또는 대표이사/총괄이사/개발자만 가능합니다." });
         }
 
         const updateData: any = {};
@@ -5848,7 +5919,7 @@ export async function registerRoutes(
       await markContractDepositDeleted(existing?.contractId);
       if (existing?.contractId) {
         await storage.updateContract(existing.contractId, {
-          paymentMethod: "입금 전",
+          paymentMethod: "입금예정",
           paymentConfirmed: false,
           depositBank: null,
         });
@@ -5879,7 +5950,7 @@ export async function registerRoutes(
         await markContractDepositDeleted(existing.contractId);
         if (existing.contractId) {
           await storage.updateContract(existing.contractId, {
-            paymentMethod: "입금 전",
+            paymentMethod: "입금예정",
             paymentConfirmed: false,
             depositBank: null,
           });

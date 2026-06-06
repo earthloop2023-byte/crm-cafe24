@@ -40,10 +40,10 @@ import { useSettings } from "@/lib/settings";
 import { formatCeilAmount } from "@/lib/utils";
 import { matchesKoreanSearch } from "@shared/korean-search";
 
-const DEFAULT_CREATE_PAYMENT_METHOD = "입금 전";
+const DEFAULT_CREATE_PAYMENT_METHOD = "입금예정";
 const DEFAULT_CREATE_DEPOSIT_BANK = "국민은행";
 const DEFAULT_CREATE_VAT_TYPE = "포함";
-const CONTRACT_PAYMENT_METHOD_OPTIONS = ["입금 전", "입금확인", "환불요청", "기타"] as const;
+const CONTRACT_PAYMENT_METHOD_OPTIONS = ["입금예정", "입금완료", "기타"] as const;
 const CONTRACT_DEPOSIT_BANK_OPTIONS = ["국민은행", "카드결제", "크몽", "기타"] as const;
 
 function AutocompleteInput({ 
@@ -632,10 +632,10 @@ export default function ContractsPage() {
       ]);
       setSelectedItems([]);
       setSelectedRowMap({});
-      toast({ title: "선택 계약의 결제확인을 입금확인으로 변경했습니다." });
+      toast({ title: "선택 계약의 결제확인을 입금완료로 변경했습니다." });
     },
     onError: () => {
-      toast({ title: "입금확인 일괄 변경에 실패했습니다.", variant: "destructive" });
+      toast({ title: "입금완료 일괄 변경에 실패했습니다.", variant: "destructive" });
     },
   });
 
@@ -1013,19 +1013,19 @@ export default function ContractsPage() {
     const asciiKey = normalized.replace(/[_-]/g, "").toLowerCase();
     if (!normalized) return DEFAULT_CREATE_PAYMENT_METHOD;
     if (
-      ["입금 전", "입금전"].includes(raw) ||
+      ["입금 예정", "입금예정", "입금 전", "입금전"].includes(raw) ||
       ["beforedeposit", "pendingdeposit", "beforepayment", "unpaid"].includes(asciiKey)
     ) {
-      return "입금 전";
+      return "입금예정";
     }
     if (
-      ["입금확인", "입금완료", "국민", "국민은행", "카드결제", "크몽"].includes(raw) ||
+      ["입금확인", "입금 완료", "입금완료", "국민", "국민은행", "카드결제", "크몽"].includes(raw) ||
       ["deposit", "deposited", "banktransfer", "transfer", "confirmed", "kb", "kookmin", "kbstar", "card", "cardpayment", "kmong"].includes(asciiKey)
     ) {
-      return "입금확인";
+      return "입금완료";
     }
     if (["환불", "환불요청", "환불처리", "환불등록"].includes(raw) || ["refund", "refunded", "refundrequest", "refundrequested"].includes(asciiKey)) {
-      return "환불요청";
+      return "기타";
     }
     if (["적립금사용", "적립금 사용", "적립금", "적립"].includes(raw) || ["usekeep", "usecredit", "credituse", "keepuse", "keep", "credit"].includes(asciiKey)) return "기타";
     if (["체크", "기타"].includes(raw) || ["check", "other", "etc"].includes(asciiKey)) {
@@ -1772,11 +1772,11 @@ export default function ContractsPage() {
 
   const handleBulkMarkDepositConfirmed = () => {
     if (selectedContractIds.length === 0) {
-      toast({ title: "입금확인으로 변경할 항목을 선택해주세요.", variant: "destructive" });
+      toast({ title: "입금완료로 변경할 항목을 선택해주세요.", variant: "destructive" });
       return;
     }
 
-    if (!confirm(`선택한 ${selectedContractIds.length}개 계약의 결제확인을 입금확인으로 변경하시겠습니까?`)) {
+    if (!confirm(`선택한 ${selectedContractIds.length}개 계약의 결제확인을 입금완료로 변경하시겠습니까?`)) {
       return;
     }
 
@@ -1966,19 +1966,19 @@ export default function ContractsPage() {
     const asciiKey = normalized.replace(/[_-]/g, "").toLowerCase();
     if (!normalized) return "";
     if (
-      ["입금 전", "입금전"].includes(raw) ||
+      ["입금 예정", "입금예정", "입금 전", "입금전"].includes(raw) ||
       ["beforedeposit", "pendingdeposit", "beforepayment", "unpaid"].includes(asciiKey)
     ) {
-      return "입금 전";
+      return "입금예정";
     }
     if (
-      ["입금확인", "입금완료", "국민", "국민은행", "카드결제", "크몽"].includes(raw) ||
+      ["입금확인", "입금 완료", "입금완료", "국민", "국민은행", "카드결제", "크몽"].includes(raw) ||
       ["deposit", "deposited", "banktransfer", "transfer", "confirmed", "kb", "kookmin", "kbstar", "card", "cardpayment", "kmong"].includes(asciiKey)
     ) {
-      return "입금확인";
+      return "입금완료";
     }
     if (["환불", "환불요청", "환불처리", "환불등록"].includes(raw) || ["refund", "refunded", "refundrequest", "refundrequested"].includes(asciiKey)) {
-      return "환불요청";
+      return "기타";
     }
     if (
       ["적립금사용", "적립금 사용", "적립금", "적립", "적립금등록"].includes(raw) ||
@@ -2258,9 +2258,8 @@ export default function ContractsPage() {
 
   const getPaymentMethodTextClassName = (paymentMethod: string | null | undefined) => {
     const normalized = canonicalPaymentMethod(paymentMethod);
-    if (normalized === "환불요청") return "text-red-600 font-medium";
-    if (normalized === "입금확인") return "text-blue-600 font-medium";
-    if (normalized === "입금 전") return "text-amber-600 font-medium";
+    if (normalized === "입금완료") return "text-blue-600 font-medium";
+    if (normalized === "입금예정") return "text-amber-600 font-medium";
     return "text-foreground";
   };
 
@@ -2371,7 +2370,7 @@ export default function ContractsPage() {
             disabled={selectedContractIds.length === 0 || bulkMarkDepositConfirmedMutation.isPending}
             data-testid="button-bulk-mark-deposit-confirmed"
           >
-            {bulkMarkDepositConfirmedMutation.isPending ? "변경 중..." : "입금확인 변경"}
+            {bulkMarkDepositConfirmedMutation.isPending ? "변경 중..." : "입금완료 변경"}
           </Button>
           <Button
             className="h-10 rounded-none bg-primary px-4 hover:bg-primary/90"
@@ -2973,7 +2972,7 @@ export default function ContractsPage() {
                         </Select>
                         {isPaymentMethodLocked && (
                           <p className="text-[11px] text-muted-foreground">
-                            입금확인과 매칭된 계약은 입금확인 목록에서 매칭 해제 후 변경할 수 있습니다.
+                            입금완료와 매칭된 계약은 입금완료 목록에서 매칭 해제 후 변경할 수 있습니다.
                           </p>
                         )}
                       </div>

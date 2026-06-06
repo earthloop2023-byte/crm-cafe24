@@ -32,7 +32,7 @@ type ReceivableRow = {
 };
 
 const CONTRACT_TYPE_REFUND = "refund";
-const PAYMENT_METHOD_DEPOSIT_CONFIRMED = "입금확인";
+const PAYMENT_METHOD_DEPOSIT_CONFIRMED = "입금완료";
 
 const normalizeText = (value: unknown) => String(value ?? "").trim();
 const normalizeCompactText = (value: unknown) => normalizeText(value).replace(/\s+/g, "");
@@ -44,6 +44,7 @@ function normalizePaymentMethod(value: unknown) {
   const asciiKey = normalized.replace(/[_-]/g, "").toLowerCase();
   if (
     normalized === PAYMENT_METHOD_DEPOSIT_CONFIRMED ||
+    normalized === "입금확인" ||
     normalized === "입금완료" ||
     normalized === "하나" ||
     normalized === "하나은행" ||
@@ -194,7 +195,7 @@ export default function ReceivablesPage() {
             customerTotalAmount,
             customerConfirmedAmount,
             customerDifferenceAmount,
-            reason: "고객 순계약금액보다 입금확인 금액이 부족합니다.",
+            reason: "고객 순계약금액보다 입금완료 금액이 부족합니다.",
           });
           remainingAmount -= mappedAmount;
         }
@@ -218,7 +219,7 @@ export default function ReceivablesPage() {
             customerTotalAmount,
             customerConfirmedAmount,
             customerDifferenceAmount,
-            reason: "환불 계약 반영 후 입금확인 금액이 순계약금액보다 큽니다.",
+            reason: "환불 계약 반영 후 입금완료 금액이 순계약금액보다 큽니다.",
           });
           remainingAmount -= Math.abs(mappedAmount);
         }
@@ -332,7 +333,7 @@ export default function ReceivablesPage() {
         구분: row.status,
         계약금액: row.contractAmount,
         고객순계약액: row.customerTotalAmount,
-        입금확인액: row.customerConfirmedAmount,
+        입금완료액: row.customerConfirmedAmount,
         차액: row.customerDifferenceAmount,
         매핑금액: row.mappedAmount,
         담당자: row.contract.managerName || "-",
@@ -371,7 +372,7 @@ export default function ReceivablesPage() {
           <AlertCircle className="w-6 h-6 text-red-500" />
           <div>
             <h1 className="text-2xl font-bold" data-testid="text-page-title">미수금 관리</h1>
-            <p className="mt-1 text-xs text-muted-foreground">고객별 순계약금액(환불 포함)과 입금확인 금액의 차이를 계약에 매핑합니다.</p>
+            <p className="mt-1 text-xs text-muted-foreground">고객별 순계약금액(환불 포함)과 입금완료 금액의 차이를 계약에 매핑합니다.</p>
           </div>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
@@ -510,7 +511,7 @@ export default function ReceivablesPage() {
                   <th className="p-4 text-left font-medium text-xs whitespace-nowrap">구분</th>
                   <th className="p-4 text-right font-medium text-xs whitespace-nowrap">계약금액</th>
                   <th className="p-4 text-right font-medium text-xs whitespace-nowrap">고객 순계약액</th>
-                  <th className="p-4 text-right font-medium text-xs whitespace-nowrap">입금확인액</th>
+                  <th className="p-4 text-right font-medium text-xs whitespace-nowrap">입금완료액</th>
                   <th className="p-4 text-right font-medium text-xs whitespace-nowrap">차액 매핑</th>
                   <th className="p-4 text-left font-medium text-xs whitespace-nowrap">담당자</th>
                   <th className="p-4 text-left font-medium text-xs whitespace-nowrap">작업자</th>

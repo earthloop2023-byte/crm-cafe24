@@ -85,7 +85,7 @@ const isPaymentConfirmedContract = (contract: ContractWithFinancials) => {
 
 const canonicalPaymentMethod = (value: string | null | undefined) => {
   const normalized = normalizeText(value).replace(/\s+/g, "");
-  if (normalized === "입금확인" || normalized === "입금완료") return "입금확인";
+  if (normalized === "입금확인" || normalized === "입금완료") return "입금완료";
   if (normalized === "환불요청" || normalized === "환불처리" || normalized === "환불등록") return "환불요청";
   if (normalized === "적립" || normalized === "적립금" || normalized === "적립금사용" || normalized === "적립금등록") return "적립금 사용";
   if (normalized === "국민") return "국민";
@@ -97,7 +97,7 @@ const getPaymentMethodBadgeClassName = (value: string | null | undefined) => {
   const normalized = canonicalPaymentMethod(value);
   if (normalized === "환불요청") return "text-red-600 border-red-200 bg-red-50";
   if (normalized === "적립금 사용") return "text-green-600 border-green-200 bg-green-50";
-  if (normalized === "입금확인") return "text-blue-600 border-blue-200 bg-blue-50";
+  if (normalized === "입금완료") return "text-blue-600 border-blue-200 bg-blue-50";
   return "text-foreground border-border bg-muted";
 };
 
@@ -576,7 +576,7 @@ export default function PaymentsContentPage() {
       환불일자: row.refundDate ? formatDate(row.refundDate) : "-",
       작업비: Number(row.workAmount) || 0,
       작업자: row.item.worker || "-",
-      실행비결제: row.contract.executionPaymentStatus || "입금전",
+      실행비결제: row.contract.executionPaymentStatus || "입금예정",
       비고: row.contract.notes || "",
     }));
 
@@ -940,7 +940,7 @@ export default function PaymentsContentPage() {
                       <TableCell className="text-xs whitespace-nowrap">{row.item.worker || "-"}</TableCell>
                       <TableCell className="text-xs whitespace-nowrap">
                         <Badge variant={row.contract.executionPaymentStatus === "입금완료" ? "default" : "secondary"} className="rounded-none text-xs">
-                          {row.contract.executionPaymentStatus || "입금전"}
+                          {row.contract.executionPaymentStatus || "입금예정"}
                         </Badge>
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground w-[180px] max-w-[180px]">

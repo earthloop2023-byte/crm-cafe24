@@ -155,7 +155,6 @@ export function DatePeriodFilter({
           <SelectItem value="lastMonth">지난달</SelectItem>
           <SelectItem value="lastYear">작년</SelectItem>
           <SelectItem value="thisYear">올해</SelectItem>
-          <SelectItem value="reset">필터삭제</SelectItem>
         </SelectContent>
       </Select>
     </>

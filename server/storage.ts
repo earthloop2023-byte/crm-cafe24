@@ -540,13 +540,13 @@ export class DatabaseStorage implements IStorage {
 
     if (paymentMethod) {
       const normalizedPayment = normalizeCompactText(paymentMethod);
-      if (normalizedPayment === "입금전") {
-        filters.push(or(eq(contracts.paymentMethod, "입금 전"), eq(contracts.paymentMethod, "입금전")));
-      } else if (normalizedPayment === "입금확인") {
+      if (normalizedPayment === "입금예정" || normalizedPayment === "입금전") {
+        filters.push(or(eq(contracts.paymentMethod, "입금예정"), eq(contracts.paymentMethod, "입금 전"), eq(contracts.paymentMethod, "입금전")));
+      } else if (normalizedPayment === "입금완료" || normalizedPayment === "입금확인") {
         filters.push(
           or(
-            eq(contracts.paymentMethod, "입금확인"),
             eq(contracts.paymentMethod, "입금완료"),
+            eq(contracts.paymentMethod, "입금확인"),
             eq(contracts.paymentMethod, "하나"),
             eq(contracts.paymentMethod, "국민"),
             eq(contracts.paymentMethod, "농협"),
