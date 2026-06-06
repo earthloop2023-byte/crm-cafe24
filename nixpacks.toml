@@ -1,3 +1,8 @@
+[variables]
+NIXPACKS_METADATA = "node"
+
+providers = ["node"]
+
 [phases.install]
 cmds = ["npm ci --no-audit --no-fund"]
 
