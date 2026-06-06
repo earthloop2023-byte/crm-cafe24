@@ -4,17 +4,15 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
-import { CustomCalendar } from "@/components/custom-calendar";
-import { AlertCircle, Search, Download, Filter, Calendar as CalendarIcon, RefreshCw } from "lucide-react";
+import { DatePeriodFilter } from "@/components/date-period-filter";
+import { AlertCircle, Search, Download, Filter, RefreshCw } from "lucide-react";
 import { Pagination } from "@/components/pagination";
 import { format } from "date-fns";
-import { ko } from "date-fns/locale";
 import * as XLSX from "xlsx";
 import type { Contract, Deposit } from "@shared/schema";
-import { getKoreanDateKey, getKoreanEndOfDay, getKoreanStartOfYear } from "@/lib/korean-time";
+import { getKoreanDateKey, getKoreanEndOfDay, getKoreanStartOfMonth } from "@/lib/korean-time";
 import { useSettings } from "@/lib/settings";
 import { useToast } from "@/hooks/use-toast";
 import { matchesKoreanSearch } from "@shared/korean-search";
@@ -115,7 +113,7 @@ export default function ReceivablesPage() {
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
-  const [startDate, setStartDate] = useState<Date>(getKoreanStartOfYear());
+  const [startDate, setStartDate] = useState<Date>(getKoreanStartOfMonth());
   const [endDate, setEndDate] = useState<Date>(getKoreanEndOfDay());
   const [customerFilter, setCustomerFilter] = useState("all");
   const [managerFilter, setManagerFilter] = useState("all");
@@ -292,7 +290,7 @@ export default function ReceivablesPage() {
     setCustomerFilter("all");
     setManagerFilter("all");
     setStatusFilter("all");
-    setStartDate(getKoreanStartOfYear());
+    setStartDate(getKoreanStartOfMonth());
     setEndDate(getKoreanEndOfDay());
     setCurrentPage(1);
     setSelectedReceivableRowKeys(new Set());
@@ -419,22 +417,13 @@ export default function ReceivablesPage() {
           <Filter className="w-4 h-4" />
           필터
         </Button>
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button variant="outline" className="w-56 justify-start gap-2 rounded-none" data-testid="filter-date">
-              <CalendarIcon className="w-4 h-4" />
-              {format(startDate, "yyyy.MM.dd", { locale: ko })} ~ {format(endDate, "yyyy.MM.dd", { locale: ko })}
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent className="w-auto p-0 rounded-none bg-white" align="start">
-            <CustomCalendar
-              startDate={startDate}
-              endDate={endDate}
-              onSelectStart={setStartDate}
-              onSelectEnd={setEndDate}
-            />
-          </PopoverContent>
-        </Popover>
+        <DatePeriodFilter
+          startDate={startDate}
+          endDate={endDate}
+          onStartDateChange={setStartDate}
+          onEndDateChange={setEndDate}
+          onReset={resetFilters}
+        />
 
         <Select
           value={customerFilter}

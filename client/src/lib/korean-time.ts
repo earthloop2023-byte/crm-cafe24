@@ -63,6 +63,11 @@ export function getKoreanStartOfYear(year?: number): Date {
   return new Date(y, 0, 1);
 }
 
+export function getKoreanStartOfMonth(): Date {
+  const now = getKoreanNow();
+  return new Date(now.getFullYear(), now.getMonth(), 1);
+}
+
 export function getKoreanEndOfYear(year?: number): Date {
   const now = getKoreanNow();
   const y = year ?? now.getFullYear();

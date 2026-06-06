@@ -5,15 +5,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
-import { CustomCalendar } from "@/components/custom-calendar";
-import { Activity, Calendar as CalendarIcon, Clock, Download, Filter, Search, User } from "lucide-react";
+import { DatePeriodFilter } from "@/components/date-period-filter";
+import { Activity, Clock, Download, Filter, Search, User } from "lucide-react";
 import { Pagination } from "@/components/pagination";
 import { format } from "date-fns";
-import { ko } from "date-fns/locale";
 import type { SystemLog } from "@shared/schema";
-import { getKoreanDaysAgo, getKoreanEndOfDay, isWithinKoreanDateRange } from "@/lib/korean-time";
+import { getKoreanEndOfDay, getKoreanStartOfMonth, isWithinKoreanDateRange } from "@/lib/korean-time";
 import { useSettings } from "@/lib/settings";
 
 const actionTypeLabels: Record<string, string> = {
@@ -75,7 +73,7 @@ export default function SystemLogsPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [actionTypeFilter, setActionTypeFilter] = useState<string>("all");
   const [itemsPerPage, setItemsPerPage] = useState(10);
-  const [startDate, setStartDate] = useState(() => getKoreanDaysAgo(30));
+  const [startDate, setStartDate] = useState(() => getKoreanStartOfMonth());
   const [endDate, setEndDate] = useState(() => getKoreanEndOfDay());
 
   const { data: logs, isLoading } = useQuery<SystemLog[]>({
@@ -149,22 +147,16 @@ export default function SystemLogsPage() {
           <Filter className="w-4 h-4" />
           필터추가
         </Button>
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button variant="outline" className="w-56 justify-start gap-2 rounded-none" data-testid="filter-date">
-              <CalendarIcon className="w-4 h-4" />
-              {format(startDate, "yyyy.MM.dd", { locale: ko })} ~ {format(endDate, "yyyy.MM.dd", { locale: ko })}
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent className="w-auto p-0 rounded-none bg-white" align="start">
-            <CustomCalendar
-              startDate={startDate}
-              endDate={endDate}
-              onSelectStart={setStartDate}
-              onSelectEnd={setEndDate}
-            />
-          </PopoverContent>
-        </Popover>
+        <DatePeriodFilter
+          startDate={startDate}
+          endDate={endDate}
+          onStartDateChange={setStartDate}
+          onEndDateChange={setEndDate}
+          onReset={() => {
+            setStartDate(getKoreanStartOfMonth());
+            setEndDate(getKoreanEndOfDay());
+          }}
+        />
         <Select value={actionTypeFilter} onValueChange={setActionTypeFilter}>
           <SelectTrigger className="w-40 rounded-none" data-testid="filter-action-type">
             <SelectValue placeholder="활동 유형" />

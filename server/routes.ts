@@ -5336,6 +5336,13 @@ export async function registerRoutes(
         await clearDepositRefundMatches(depositId);
       }
       await markContractDepositDeleted(existing?.contractId);
+      if (existing?.contractId) {
+        await storage.updateContract(existing.contractId, {
+          paymentMethod: "입금 전",
+          paymentConfirmed: false,
+          depositBank: null,
+        });
+      }
       await storage.deleteDeposit(depositId);
       res.json({ success: true });
     } catch (error) {
@@ -5360,6 +5367,13 @@ export async function registerRoutes(
           await clearDepositRefundMatches(id);
         }
         await markContractDepositDeleted(existing.contractId);
+        if (existing.contractId) {
+          await storage.updateContract(existing.contractId, {
+            paymentMethod: "입금 전",
+            paymentConfirmed: false,
+            depositBank: null,
+          });
+        }
         await storage.deleteDeposit(id);
         deletedIds.push(id);
       }

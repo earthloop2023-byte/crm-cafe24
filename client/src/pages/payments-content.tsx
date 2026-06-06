@@ -1,9 +1,7 @@
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
-import { ko } from "date-fns/locale";
 import {
-  Calendar as CalendarIcon,
   CheckCircle,
   Coins,
   CreditCard,
@@ -26,14 +24,13 @@ import { Pagination } from "@/components/pagination";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
-import { CustomCalendar } from "@/components/custom-calendar";
+import { DatePeriodFilter } from "@/components/date-period-filter";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { getKoreanDateKey, getKoreanEndOfDay, getKoreanStartOfYear } from "@/lib/korean-time";
+import { getKoreanDateKey, getKoreanEndOfDay, getKoreanStartOfMonth } from "@/lib/korean-time";
 import { useSettings } from "@/lib/settings";
 import { formatCeilAmount } from "@/lib/utils";
 
@@ -71,6 +68,10 @@ type PaymentRow = {
 };
 
 const getDisplayedNetAmount = (row: PaymentRow) => Math.max(0, row.totalAmount - row.refundAmount);
+
+const isRefundContract = (contract: ContractWithFinancials) =>
+  normalizeText((contract as ContractWithFinancials & { contractType?: string | null }).contractType).toLowerCase() === "refund" ||
+  Number(contract.cost) < 0;
 
 const isExecutionPaymentConfirmed = (status: unknown) => {
   const normalized = normalizeText(status).replace(/\s+/g, "");
@@ -402,7 +403,7 @@ export default function PaymentsContentPage() {
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(20);
-  const [startDate, setStartDate] = useState<Date>(getKoreanStartOfYear());
+  const [startDate, setStartDate] = useState<Date>(getKoreanStartOfMonth());
   const [endDate, setEndDate] = useState<Date>(getKoreanEndOfDay());
   const [paymentFilter, setPaymentFilter] = useState("all");
   const [workerFilter, setWorkerFilter] = useState("all");
@@ -452,6 +453,8 @@ export default function PaymentsContentPage() {
       const items = parseStoredProductItems(contract, products, productRateHistories);
       const summaryItem = createContractSummaryItem(contract, items);
       const contractRefund = refundRowsByContract.get(contract.id);
+      const refundContractAmount = isRefundContract(contract) ? Math.abs(Number(contract.cost) || 0) : 0;
+      const resolvedRefundAmount = Math.max(refundContractAmount, contractRefund?.total || 0);
 
       return {
         rowKey: contract.id,
@@ -461,8 +464,8 @@ export default function PaymentsContentPage() {
         itemIndex: 0,
         totalAmount: Math.max(0, Number(contract.cost) || 0),
         workAmount: Math.max(0, Number(contract.workCost) || 0),
-        refundAmount: contractRefund?.total || 0,
-        refundDate: contractRefund?.lastDate || null,
+        refundAmount: resolvedRefundAmount,
+        refundDate: contractRefund?.lastDate || (refundContractAmount > 0 ? String(contract.contractDate || "") : null),
       } satisfies PaymentRow;
     });
   }, [contractsData, products, productRateHistories, refunds]);
@@ -720,22 +723,21 @@ export default function PaymentsContentPage() {
       </div>
 
       <div className="flex items-center gap-2 p-3 bg-card border border-border rounded-none flex-wrap">
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button variant="outline" className="w-56 justify-start gap-2 rounded-none" data-testid="filter-date">
-              <CalendarIcon className="w-4 h-4" />
-              {format(startDate, "yyyy.MM.dd", { locale: ko })} ~ {format(endDate, "yyyy.MM.dd", { locale: ko })}
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent className="w-auto p-0 rounded-none bg-white" align="start">
-            <CustomCalendar
-              startDate={startDate}
-              endDate={endDate}
-              onSelectStart={setStartDate}
-              onSelectEnd={setEndDate}
-            />
-          </PopoverContent>
-        </Popover>
+        <DatePeriodFilter
+          startDate={startDate}
+          endDate={endDate}
+          onStartDateChange={setStartDate}
+          onEndDateChange={setEndDate}
+          onReset={() => {
+            setSearchQuery("");
+            setStartDate(getKoreanStartOfMonth());
+            setEndDate(getKoreanEndOfDay());
+            setPaymentFilter("all");
+            setWorkerFilter("all");
+            setSelectedRowKeys(new Set());
+            setCurrentPage(1);
+          }}
+        />
         <Select
           value={paymentFilter}
           onValueChange={(value) => {
@@ -777,7 +779,7 @@ export default function PaymentsContentPage() {
           className="ml-auto text-muted-foreground rounded-none"
           onClick={() => {
             setSearchQuery("");
-            setStartDate(getKoreanStartOfYear());
+            setStartDate(getKoreanStartOfMonth());
             setEndDate(getKoreanEndOfDay());
             setPaymentFilter("all");
             setWorkerFilter("all");

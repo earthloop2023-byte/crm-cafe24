@@ -5,7 +5,6 @@ import { ko } from "date-fns/locale";
 import {
   BarChart3,
   Box,
-  Calendar as CalendarIcon,
   CalendarDays,
   CircleDollarSign,
   RefreshCw,
@@ -31,8 +30,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { CustomCalendar } from "@/components/custom-calendar";
+import { DatePeriodFilter } from "@/components/date-period-filter";
 
 type ContractItem = {
   id?: string | number | null;
@@ -565,56 +563,21 @@ export default function SalesAnalyticsPage() {
                 <Search className="h-4 w-4" />
                 통합 필터
               </div>
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button variant="outline" className="w-full justify-start gap-2 rounded-none sm:w-56" data-testid="button-date-filter">
-                    <CalendarIcon className="h-4 w-4 text-muted-foreground" />
-                    {format(toKoreanDate(startDate) || new Date(), "yyyy.MM.dd", { locale: ko })} ~ {format(toKoreanDate(endDate) || new Date(), "yyyy.MM.dd", { locale: ko })}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-auto p-0 rounded-none bg-white" align="start">
-                  <CustomCalendar
-                    startDate={toKoreanDate(startDate) || new Date()}
-                    endDate={toKoreanDate(endDate) || new Date()}
-                    onSelectStart={(date) => {
-                      setStartDate(toDateKey(date));
-                      setPeriodFilter("custom");
-                    }}
-                    onSelectEnd={(date) => {
-                      setEndDate(toDateKey(date));
-                      setPeriodFilter("custom");
-                    }}
-                  />
-                </PopoverContent>
-              </Popover>
-              <Select
-                value={periodFilter}
-                onValueChange={(value) => {
-                  if (value === "reset") {
-                    resetFilters();
-                    return;
-                  }
-                  const nextFilter = value as PeriodFilter;
-                  const nextRange = getRelativeDateRange(nextFilter, todayKey);
-                  setPeriodFilter(nextFilter);
-                  setStartDate(nextRange.startDate);
-                  setEndDate(nextRange.endDate);
+              <DatePeriodFilter
+                startDate={toKoreanDate(startDate) || new Date()}
+                endDate={toKoreanDate(endDate) || new Date()}
+                onStartDateChange={(date) => {
+                  setStartDate(toDateKey(date));
+                  setPeriodFilter("custom");
                 }}
-              >
-                <SelectTrigger className="rounded-none sm:w-32" data-testid="filter-period">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="rounded-none">
-                  <SelectItem value="thisMonth">이번달</SelectItem>
-                  <SelectItem value="yesterday">어제</SelectItem>
-                  <SelectItem value="today">오늘</SelectItem>
-                  <SelectItem value="lastWeek">지난주</SelectItem>
-                  <SelectItem value="lastMonth">지난달</SelectItem>
-                  <SelectItem value="lastYear">작년</SelectItem>
-                  <SelectItem value="thisYear">올해</SelectItem>
-                  <SelectItem value="reset">필터삭제</SelectItem>
-                </SelectContent>
-              </Select>
+                onEndDateChange={(date) => {
+                  setEndDate(toDateKey(date));
+                  setPeriodFilter("custom");
+                }}
+                onReset={resetFilters}
+                buttonClassName="w-full justify-start gap-2 rounded-none sm:w-56"
+                buttonTestId="button-date-filter"
+              />
               <Input
                 value={searchTerm}
                 onChange={(event) => setSearchTerm(event.target.value)}

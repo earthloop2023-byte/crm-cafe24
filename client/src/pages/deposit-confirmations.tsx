@@ -5,9 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
-import { CustomCalendar } from "@/components/custom-calendar";
+import { DatePeriodFilter } from "@/components/date-period-filter";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Landmark, Search, Upload, ChevronLeft, ChevronRight, Calendar as CalendarIcon, Check, Plus, Trash2, FileText, Pencil } from "lucide-react";
@@ -16,9 +15,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { format } from "date-fns";
-import { ko } from "date-fns/locale";
 import type { Deposit, Contract, RefundWithContract } from "@shared/schema";
-import { getKoreanStartOfYear, getKoreanEndOfDay, isWithinKoreanDateRange } from "@/lib/korean-time";
+import { getKoreanStartOfMonth, getKoreanEndOfDay, isWithinKoreanDateRange } from "@/lib/korean-time";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useSettings } from "@/lib/settings";
 import { useToast } from "@/hooks/use-toast";
@@ -72,7 +70,7 @@ export default function DepositConfirmationsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(20);
-  const [startDate, setStartDate] = useState<Date>(getKoreanStartOfYear());
+  const [startDate, setStartDate] = useState<Date>(getKoreanStartOfMonth());
   const [endDate, setEndDate] = useState<Date>(getKoreanEndOfDay());
   const [statusFilter, setStatusFilter] = useState("all");
   const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
@@ -242,6 +240,7 @@ export default function DepositConfirmationsPage() {
       }
       await queryClient.invalidateQueries({ queryKey: ["/api/deposits"] });
       await queryClient.invalidateQueries({ queryKey: ["/api/contracts"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/contracts-with-financials"] });
       await queryClient.invalidateQueries({ queryKey: ["/api/deposits/contracts-by-department"] });
       await queryClient.invalidateQueries({ queryKey: ["/api/refunds"] });
       await queryClient.refetchQueries({ queryKey: ["/api/deposits"], type: "active" });
@@ -275,6 +274,7 @@ export default function DepositConfirmationsPage() {
       );
       await queryClient.invalidateQueries({ queryKey: ["/api/deposits"] });
       await queryClient.invalidateQueries({ queryKey: ["/api/contracts"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/contracts-with-financials"] });
       await queryClient.invalidateQueries({ queryKey: ["/api/deposits/contracts-by-department"] });
       await queryClient.invalidateQueries({ queryKey: ["/api/refunds"] });
       await queryClient.refetchQueries({ queryKey: ["/api/deposits"], type: "active" });
@@ -831,22 +831,19 @@ export default function DepositConfirmationsPage() {
       </div>
 
       <div className="flex items-center gap-2 p-3 bg-card border border-border rounded-none flex-wrap">
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button variant="outline" className="w-56 justify-start gap-2 rounded-none" data-testid="filter-date">
-              <CalendarIcon className="w-4 h-4" />
-              {format(startDate, "yyyy.MM.dd", { locale: ko })} ~ {format(endDate, "yyyy.MM.dd", { locale: ko })}
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent className="w-auto p-0 rounded-none bg-white" align="start">
-            <CustomCalendar
-              startDate={startDate}
-              endDate={endDate}
-              onSelectStart={setStartDate}
-              onSelectEnd={setEndDate}
-            />
-          </PopoverContent>
-        </Popover>
+        <DatePeriodFilter
+          startDate={startDate}
+          endDate={endDate}
+          onStartDateChange={setStartDate}
+          onEndDateChange={setEndDate}
+          onReset={() => {
+            setSearchQuery("");
+            setStartDate(getKoreanStartOfMonth());
+            setEndDate(getKoreanEndOfDay());
+            setStatusFilter("all");
+            setCurrentPage(1);
+          }}
+        />
         <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setCurrentPage(1); }}>
           <SelectTrigger className="w-32 rounded-none" data-testid="filter-status">
             <SelectValue placeholder="상태" />
@@ -863,7 +860,7 @@ export default function DepositConfirmationsPage() {
           className="ml-auto text-muted-foreground rounded-none"
           onClick={() => {
             setSearchQuery("");
-            setStartDate(getKoreanStartOfYear());
+            setStartDate(getKoreanStartOfMonth());
             setEndDate(getKoreanEndOfDay());
             setStatusFilter("all");
             setCurrentPage(1);

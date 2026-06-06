@@ -27,6 +27,7 @@ import { Pagination } from "@/components/pagination";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { CustomCalendar } from "@/components/custom-calendar";
+import { DatePeriodFilter } from "@/components/date-period-filter";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -34,7 +35,7 @@ import { format } from "date-fns";
 import { ko } from "date-fns/locale";
 import type { Contract, Deposit, InsertContract, User, Customer, Product, ProductRateHistory, Refund } from "@shared/schema";
 import { Textarea } from "@/components/ui/textarea";
-import { getKoreanNow, getKoreanStartOfYear, getKoreanEndOfDay, getKoreanDateKey } from "@/lib/korean-time";
+import { getKoreanNow, getKoreanStartOfMonth, getKoreanEndOfDay, getKoreanDateKey } from "@/lib/korean-time";
 import { useSettings } from "@/lib/settings";
 import { formatCeilAmount } from "@/lib/utils";
 import { matchesKoreanSearch } from "@shared/korean-search";
@@ -307,7 +308,7 @@ export default function ContractsPage() {
   const [productFilter, setProductFilter] = useState<string>("all");
   const [paymentFilter, setPaymentFilter] = useState<string>("all");
   const [sortOption, setSortOption] = useState<string>("contractDateDesc");
-  const [startDate, setStartDate] = useState<Date>(getKoreanStartOfYear());
+  const [startDate, setStartDate] = useState<Date>(getKoreanStartOfMonth());
   const [endDate, setEndDate] = useState<Date>(getKoreanEndOfDay());
 
   // Product item type for the form
@@ -3040,22 +3041,24 @@ export default function ContractsPage() {
 
       {/* Filter Bar */}
       <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button variant="outline" size="sm" className="col-span-2 h-10 justify-start gap-2 rounded-none sm:col-auto sm:h-8" data-testid="button-date-filter">
-              <CalendarIcon className="w-4 h-4 text-muted-foreground" />
-              <span className="text-sm">{format(startDate, "yyyy.MM.dd")} ~ {format(endDate, "yyyy.MM.dd")}</span>
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent className="w-auto p-0 rounded-none bg-white" align="start">
-            <CustomCalendar
-              startDate={startDate}
-              endDate={endDate}
-              onSelectStart={setStartDate}
-              onSelectEnd={setEndDate}
-            />
-          </PopoverContent>
-        </Popover>
+        <DatePeriodFilter
+          startDate={startDate}
+          endDate={endDate}
+          onStartDateChange={setStartDate}
+          onEndDateChange={setEndDate}
+          buttonClassName="col-span-2 h-10 justify-start gap-2 rounded-none sm:col-auto sm:h-8"
+          selectClassName="h-10 w-full rounded-none text-sm sm:h-8 sm:w-auto sm:min-w-[100px]"
+          buttonTestId="button-date-filter"
+          onReset={() => {
+            setStartDate(getKoreanStartOfMonth());
+            setEndDate(getKoreanEndOfDay());
+            setManagerFilter("all");
+            setCustomerFilter("all");
+            setProductFilter("all");
+            setPaymentFilter("all");
+            setCurrentPage(1);
+          }}
+        />
         <Select value={managerFilter} onValueChange={setManagerFilter}>
           <SelectTrigger className="h-10 w-full rounded-none text-sm sm:h-8 sm:w-auto sm:min-w-[100px]" data-testid="filter-manager">
             <SelectValue placeholder="담당자" />
@@ -3123,7 +3126,7 @@ export default function ContractsPage() {
             setPaymentFilter("all");
             setSortOption("contractDateDesc");
             setSearchQuery("");
-            setStartDate(getKoreanStartOfYear());
+            setStartDate(getKoreanStartOfMonth());
             setEndDate(getKoreanEndOfDay());
           }}
           data-testid="button-reset-filters"
