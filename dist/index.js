@@ -9811,8 +9811,12 @@ function listenOnPort(server, listenPort, label = "primary") {
   );
 }
 listenOnPort(httpServer, port);
-if (!process.env.PORT && port !== 8080) {
-  listenOnPort(createServer(app), 8080, "fallback");
+if (!process.env.PORT) {
+  for (const fallbackPort of [5e3, 8e3, 8080]) {
+    if (fallbackPort !== port) {
+      listenOnPort(createServer(app), fallbackPort, "fallback");
+    }
+  }
 }
 export {
   log
