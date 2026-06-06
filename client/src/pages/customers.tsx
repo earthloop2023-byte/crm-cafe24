@@ -552,21 +552,23 @@ export default function CustomersPage() {
   }
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex flex-col gap-3 border-b border-border px-4 py-4 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex min-w-0 items-center gap-2">
-          <Users className="h-5 w-5 shrink-0 text-foreground" />
-          <h1 className="truncate text-lg font-bold leading-tight" data-testid="text-customers-title">
+    <div className="space-y-4 p-4 sm:p-6">
+      <div className="sticky top-0 z-30 -mx-4 -mt-4 space-y-3 border-b border-border/80 bg-background/95 px-4 pb-4 pt-4 backdrop-blur supports-[backdrop-filter]:bg-background/75 sm:-mx-6 sm:-mt-6 sm:px-6 sm:pt-6">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+          <Users className="h-5 w-5 shrink-0 text-primary sm:h-6 sm:w-6" />
+          <h1 className="truncate text-lg font-bold leading-tight sm:text-xl" data-testid="text-customers-title">
             고객목록
           </h1>
         </div>
 
-        <div className="grid w-full grid-cols-[1fr_auto_auto] items-center gap-2 lg:flex lg:w-auto">
+        <div className="grid w-full grid-cols-[1fr_auto_auto] items-center gap-2 lg:flex lg:w-auto lg:gap-3">
           <span className="col-span-3 text-sm text-muted-foreground lg:col-auto" data-testid="text-search-count">
             검색 결과 {filteredCustomers.length}건
           </span>
 
           <div className="relative min-w-0">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               value={search}
               onChange={(event) => {
@@ -574,25 +576,24 @@ export default function CustomersPage() {
                 setCurrentPage(1);
               }}
               placeholder="고객명/전화번호/유형 검색"
-              className="h-10 w-full rounded-none pr-9 text-sm lg:w-[260px]"
+              className="h-10 w-full rounded-none pl-9 pr-9 text-sm lg:w-64"
               data-testid="input-search-customers"
             />
-            <Search className="pointer-events-none absolute right-2 top-2.5 h-4 w-4 text-muted-foreground" />
           </div>
 
           <Button
-            variant="ghost"
-            size="icon"
-            className="h-10 w-10 rounded-none"
+            variant="outline"
+            className="h-10 rounded-none px-3"
             onClick={handleBulkDelete}
             disabled={selectedIds.size === 0 || bulkDeleteMutation.isPending}
             data-testid="button-bulk-delete"
           >
-            <Trash2 className="h-4 w-4" />
+            <Trash2 className="h-4 w-4 lg:mr-1" />
+            <span className="hidden lg:inline">삭제</span>
           </Button>
 
           <Button
-            className="h-10 rounded-none px-4"
+            className="h-10 rounded-none bg-primary px-4 hover:bg-primary/90"
             onClick={openCreateDialog}
             data-testid="button-add-customer"
           >
@@ -600,10 +601,10 @@ export default function CustomersPage() {
           </Button>
         </div>
       </div>
+      </div>
 
-      <div className="flex-1 overflow-auto">
-        <div className="min-w-full overflow-x-auto">
-        <Table className="min-w-[960px]">
+      <div className="overflow-x-auto border border-border bg-background">
+        <Table className="w-full min-w-[1100px]">
           <TableHeader>
             <TableRow className="bg-muted/30">
               <TableHead className="w-[40px]">
@@ -668,10 +669,9 @@ export default function CustomersPage() {
             )}
           </TableBody>
         </Table>
-        </div>
       </div>
 
-      <div className="flex flex-col gap-2 border-t border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <Select
           value={String(pageSize)}
           onValueChange={(value) => {
