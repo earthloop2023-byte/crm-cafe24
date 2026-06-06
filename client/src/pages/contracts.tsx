@@ -1955,7 +1955,7 @@ export default function ContractsPage() {
     const text = normalizeText(value);
     const compact = text.replace(/\s+/g, "");
     if (!compact) return "";
-    if (text === "?????" || compact === "바이럴상품") return "바이럴상품";
+    if (text === "바이럴상품" || compact === "바이럴상품") return "바이럴상품";
     return text;
   }
 

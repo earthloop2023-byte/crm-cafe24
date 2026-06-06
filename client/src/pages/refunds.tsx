@@ -157,11 +157,11 @@ export default function RefundsPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/contracts-with-financials"] });
       queryClient.invalidateQueries({ queryKey: ["/api/refunds"] });
       queryClient.invalidateQueries({ queryKey: ["/api/sales-analytics"] });
-      toast({ title: "?? ??? ??????." });
+      toast({ title: "환불 철회가 완료되었습니다." });
     },
     onError: (error) => {
       toast({
-        title: error instanceof Error ? error.message : "?? ?? ? ??? ??????.",
+        title: error instanceof Error ? error.message : "환불 철회 중 오류가 발생했습니다.",
         variant: "destructive",
       });
     },
@@ -170,7 +170,7 @@ export default function RefundsPage() {
   const handleWithdrawRefund = (row: RefundReferenceRow) => {
     const refundContractId = row.id.startsWith("contract:") ? row.id.slice("contract:".length) : "";
     if (!refundContractId) return;
-    if (!window.confirm("??? ?? ??? ???? ?????? ?????????")) return;
+    if (!window.confirm("환불 계약을 철회하면 계약관리의 환불내역이 삭제됩니다. 진행하시겠습니까?")) return;
     withdrawRefundMutation.mutate(refundContractId);
   };
 

@@ -32,7 +32,7 @@ function normalizeCategoryKey(value: unknown): string {
 function normalizeCategoryLabel(value: unknown): string {
   const raw = String(value || "").trim();
   if (!raw) return "";
-  if (raw === "?????") return "바이럴상품";
+  if (raw === "바이럴상품") return "바이럴상품";
   return raw;
 }
 
