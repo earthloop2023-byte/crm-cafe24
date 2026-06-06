@@ -3583,7 +3583,7 @@ export async function registerRoutes(
         requestedName !== undefined &&
         requestedName !== String(beforeCustomer.name || "").trim()
       ) {
-        return res.status(403).json({ error: "고객사명은 관리자만 수정할 수 있습니다." });
+        return res.status(403).json({ error: "고객사 (회사명)은 관리자만 수정할 수 있습니다." });
       }
       if (isCompanyCustomer && !isAdminUser && parsed.data.lifecycleStage === "lead") {
         return res.status(403).json({ error: "고객사는 리드로 되돌릴 수 없습니다." });

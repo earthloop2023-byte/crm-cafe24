@@ -55,6 +55,7 @@ import { insertCustomerSchema } from "@shared/schema";
 import type {
   Customer,
   ContractWithFinancials,
+  Deposit,
   User,
 } from "@shared/schema";
 
@@ -136,10 +137,10 @@ type CustomerFormData = z.infer<typeof customerFormSchema>;
 type CounselingFormData = z.infer<typeof counselingFormSchema>;
 
 const CUSTOMER_FIELD_LABELS: Record<string, string> = {
-  name: "고객명",
+  name: "고객사 (회사명)",
   email: "이메일",
   phone: "전화번호",
-  company: "회사명",
+  company: "담당자",
   status: "상태",
   customerType: "고객구분",
   customerCategory: "고객유형",
@@ -195,6 +196,30 @@ function findDuplicateCustomer(
 function toNumber(value: unknown): number {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function normalizePaymentDisplay(value: unknown): string {
+  const raw = String(value ?? "").trim();
+  const normalized = raw.replace(/\s+/g, "");
+  const asciiKey = normalized.replace(/[_-]/g, "").toLowerCase();
+  if (!normalized) return "";
+  if (["입금예정", "입금전"].includes(normalized) || ["beforedeposit", "pendingdeposit", "beforepayment", "unpaid"].includes(asciiKey)) {
+    return "입금예정";
+  }
+  if (
+    ["입금완료", "입금확인", "하나", "하나은행", "국민", "국민은행", "농협", "농협은행", "카드결제", "크몽"].includes(normalized) ||
+    ["deposit", "deposited", "confirmed", "banktransfer", "transfer", "hana", "hanabank", "kb", "kookmin", "nonghyup", "nh", "card", "cardpayment", "kmong"].includes(asciiKey)
+  ) {
+    return "입금완료";
+  }
+  return raw;
+}
+
+function getDepositConfirmedAmount(deposit: Deposit | null | undefined): number {
+  if (!deposit) return 0;
+  const confirmedAmount = Math.max(0, Math.round(Number(deposit.confirmedAmount) || 0));
+  if (confirmedAmount > 0) return confirmedAmount;
+  return Math.max(0, Math.round(Number(deposit.depositAmount) || 0));
 }
 
 function normalizeCompactText(value: unknown): string {
@@ -714,7 +739,7 @@ export default function CustomersPage({ mode = "lead" }: { mode?: CustomerPageMo
                   data-testid="checkbox-select-all"
                 />
               </TableHead>
-              <SortableHeader field="name">{noun}명</SortableHeader>
+              <SortableHeader field="name">고객사 (회사명)</SortableHeader>
               <SortableHeader field="phone">전화번호</SortableHeader>
               <SortableHeader field="customerType">고객구분</SortableHeader>
               <SortableHeader field="customerCategory">고객유형</SortableHeader>
@@ -941,6 +966,11 @@ function CustomerDetailDialog({
     enabled: open && isEditMode,
   });
 
+  const { data: allDeposits = [] } = useQuery<Deposit[]>({
+    queryKey: ["/api/deposits"],
+    enabled: open && isEditMode && !isLeadMode,
+  });
+
   const { data: counselingHistory = [], isLoading: counselingLoading } = useQuery<CustomerCounseling[]>({
     queryKey: ["/api/customers", customerId, "counselings"],
     enabled: open && isEditMode,
@@ -966,6 +996,16 @@ function CustomerDetailDialog({
           new Date(a.contractDate ?? a.createdAt).getTime(),
       );
   }, [allContracts, customer]);
+
+  const depositAmountByContractId = useMemo(() => {
+    const next = new Map<string, number>();
+    for (const deposit of allDeposits) {
+      const contractId = String(deposit.contractId || "").trim();
+      if (!contractId) continue;
+      next.set(contractId, (next.get(contractId) || 0) + getDepositConfirmedAmount(deposit));
+    }
+    return next;
+  }, [allDeposits]);
 
   /*
   const customerKeepHistory = useMemo(() => {
@@ -1040,8 +1080,16 @@ function CustomerDetailDialog({
     const contractCount = customerContracts.length;
     const contractAmount = customerContracts.reduce((sum, contract) => sum + toNumber(contract.cost), 0);
     const refundAmount = customerContracts.reduce((sum, contract) => sum + toNumber(contract.totalRefund), 0);
-    return { contractCount, contractAmount, refundAmount };
-  }, [customerContracts]);
+    const depositAmount = customerContracts.reduce((sum, contract) => {
+      const linkedDepositAmount = depositAmountByContractId.get(String(contract.id)) || 0;
+      if (linkedDepositAmount > 0) return sum + linkedDepositAmount;
+      return normalizePaymentDisplay(contract.paymentMethod) === "입금완료" || contract.paymentConfirmed === true
+        ? sum + Math.max(0, toNumber(contract.cost) - toNumber(contract.totalRefund))
+        : sum;
+    }, 0);
+    const receivableAmount = Math.max(0, contractAmount - refundAmount - depositAmount);
+    return { contractCount, contractAmount, refundAmount, depositAmount, receivableAmount };
+  }, [customerContracts, depositAmountByContractId]);
 
   const saveCustomerMutation = useMutation({
     mutationFn: async (data: CustomerFormData) => {
@@ -1287,11 +1335,11 @@ function CustomerDetailDialog({
                     name="name"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>{noun}명 *</FormLabel>
+                        <FormLabel>고객사 (회사명) *</FormLabel>
                         <FormControl>
                           <Input
                             {...field}
-                            placeholder={`${noun}명을 입력하세요`}
+                            placeholder="고객사 또는 회사명을 입력하세요"
                             className="rounded-none"
                             disabled={!canEditName}
                             data-testid="input-customer-name"
@@ -1376,12 +1424,12 @@ function CustomerDetailDialog({
                     name="company"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>회사명</FormLabel>
+                        <FormLabel>담당자</FormLabel>
                         <FormControl>
                           <Input
                             {...field}
                             value={field.value || ""}
-                            placeholder="회사명을 입력하세요"
+                            placeholder="담당자를 입력하세요"
                             className="rounded-none"
                             data-testid="input-customer-company"
                           />
@@ -1523,7 +1571,7 @@ function CustomerDetailDialog({
 
             {!isLeadMode && isEditMode ? (
               <>
-                <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+                <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
                   <Card className="rounded-none">
                     <CardHeader className="pb-2">
                       <CardTitle className="text-xs font-medium text-muted-foreground">계약 수</CardTitle>
@@ -1557,12 +1605,34 @@ function CustomerDetailDialog({
                     </CardContent>
                   </Card>
 
+                  <Card className="rounded-none">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-xs font-medium text-muted-foreground">입금금액</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <p className="text-lg font-semibold text-blue-600" data-testid="text-summary-deposit-amount">
+                        {formatCurrency(summary.depositAmount)}
+                      </p>
+                    </CardContent>
+                  </Card>
+
+                  <Card className="rounded-none">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-xs font-medium text-muted-foreground">미수금</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <p className="text-lg font-semibold text-red-600" data-testid="text-summary-receivable-amount">
+                        {formatCurrency(summary.receivableAmount)}
+                      </p>
+                    </CardContent>
+                  </Card>
+
                 </div>
 
               </>
             ) : !isLeadMode ? (
               <div className="rounded-md border p-4 text-sm text-muted-foreground">
-                고객사를 저장하면 계약 요약(계약 수/계약금액/환불금액)이 자동 표시됩니다.
+                고객사를 저장하면 계약 요약(계약 수/계약금액/환불금액/입금금액/미수금)이 자동 표시됩니다.
               </div>
             ) : null}
           </TabsContent>
@@ -1585,19 +1655,34 @@ function CustomerDetailDialog({
                       <TableHead>상품</TableHead>
                       <TableHead className="text-right">계약금액</TableHead>
                       <TableHead className="text-right">환불금액</TableHead>
+                      <TableHead className="text-right">입금금액</TableHead>
+                      <TableHead className="text-right">미수금</TableHead>
                       <TableHead>결제상태</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {customerContracts.map((contract) => (
-                      <TableRow key={contract.id}>
-                        <TableCell className="text-xs">{formatDate(contract.contractDate)}</TableCell>
-                        <TableCell className="text-xs">{contract.products || "-"}</TableCell>
-                        <TableCell className="text-right text-xs">{formatCurrency(toNumber(contract.cost))}</TableCell>
-                        <TableCell className="text-right text-xs">{formatCurrency(toNumber(contract.totalRefund))}</TableCell>
-                        <TableCell className="text-xs">{contract.paymentMethod || "-"}</TableCell>
-                      </TableRow>
-                    ))}
+                    {customerContracts.map((contract) => {
+                      const contractAmount = toNumber(contract.cost);
+                      const refundAmount = toNumber(contract.totalRefund);
+                      const linkedDepositAmount = depositAmountByContractId.get(String(contract.id)) || 0;
+                      const depositAmount = linkedDepositAmount > 0
+                        ? linkedDepositAmount
+                        : normalizePaymentDisplay(contract.paymentMethod) === "입금완료" || contract.paymentConfirmed === true
+                          ? Math.max(0, contractAmount - refundAmount)
+                          : 0;
+                      const receivableAmount = Math.max(0, contractAmount - refundAmount - depositAmount);
+                      return (
+                        <TableRow key={contract.id}>
+                          <TableCell className="text-xs">{formatDate(contract.contractDate)}</TableCell>
+                          <TableCell className="text-xs">{contract.products || "-"}</TableCell>
+                          <TableCell className="text-right text-xs">{formatCurrency(contractAmount)}</TableCell>
+                          <TableCell className="text-right text-xs">{formatCurrency(refundAmount)}</TableCell>
+                          <TableCell className="text-right text-xs text-blue-600">{formatCurrency(depositAmount)}</TableCell>
+                          <TableCell className="text-right text-xs text-red-600">{formatCurrency(receivableAmount)}</TableCell>
+                          <TableCell className="text-xs">{normalizePaymentDisplay(contract.paymentMethod) || "-"}</TableCell>
+                        </TableRow>
+                      );
+                    })}
                   </TableBody>
                 </Table>
               </div>

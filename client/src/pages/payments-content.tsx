@@ -85,11 +85,19 @@ const isPaymentConfirmedContract = (contract: ContractWithFinancials) => {
 
 const canonicalPaymentMethod = (value: string | null | undefined) => {
   const normalized = normalizeText(value).replace(/\s+/g, "");
+  if (normalized === "입금전" || normalized === "입금예정") return "입금예정";
   if (normalized === "입금확인" || normalized === "입금완료") return "입금완료";
   if (normalized === "환불요청" || normalized === "환불처리" || normalized === "환불등록") return "환불요청";
   if (normalized === "적립" || normalized === "적립금" || normalized === "적립금사용" || normalized === "적립금등록") return "적립금 사용";
   if (normalized === "국민") return "국민";
   if (normalized === "하나") return "하나";
+  return normalizeText(value);
+};
+
+const canonicalExecutionPaymentStatus = (value: string | null | undefined) => {
+  const normalized = normalizeText(value).replace(/\s+/g, "");
+  if (!normalized || normalized === "입금전" || normalized === "입금예정") return "입금예정";
+  if (normalized === "입금확인" || normalized === "입금완료") return "입금완료";
   return normalizeText(value);
 };
 
@@ -576,7 +584,7 @@ export default function PaymentsContentPage() {
       환불일자: row.refundDate ? formatDate(row.refundDate) : "-",
       작업비: Number(row.workAmount) || 0,
       작업자: row.item.worker || "-",
-      실행비결제: row.contract.executionPaymentStatus || "입금예정",
+      실행비결제: canonicalExecutionPaymentStatus(row.contract.executionPaymentStatus),
       비고: row.contract.notes || "",
     }));
 
@@ -939,8 +947,8 @@ export default function PaymentsContentPage() {
                       </TableCell>
                       <TableCell className="text-xs whitespace-nowrap">{row.item.worker || "-"}</TableCell>
                       <TableCell className="text-xs whitespace-nowrap">
-                        <Badge variant={row.contract.executionPaymentStatus === "입금완료" ? "default" : "secondary"} className="rounded-none text-xs">
-                          {row.contract.executionPaymentStatus || "입금예정"}
+                        <Badge variant={canonicalExecutionPaymentStatus(row.contract.executionPaymentStatus) === "입금완료" ? "default" : "secondary"} className="rounded-none text-xs">
+                          {canonicalExecutionPaymentStatus(row.contract.executionPaymentStatus)}
                         </Badge>
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground w-[180px] max-w-[180px]">
