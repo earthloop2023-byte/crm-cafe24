@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Route, Switch } from "wouter";
+import { Redirect, Route, Switch } from "wouter";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient } from "./lib/queryClient";
 import { Toaster } from "@/components/ui/toaster";
@@ -80,7 +80,9 @@ function Router() {
   return (
     <Switch>
       <Route path="/">{() => <ProtectedRoute path="/analytics/sales" component={SalesAnalyticsPage} />}</Route>
-      <Route path="/customers">{() => <ProtectedRoute path="/customers" component={CustomersPage} />}</Route>
+      <Route path="/customers">{() => <Redirect to="/leads" />}</Route>
+      <Route path="/leads">{() => <ProtectedRoute path="/leads" component={() => <CustomersPage mode="lead" />} />}</Route>
+      <Route path="/customer-companies">{() => <ProtectedRoute path="/customer-companies" component={() => <CustomersPage mode="company" />} />}</Route>
       <Route path="/activities">{() => <ProtectedRoute path="/activities" component={ActivitiesPage} />}</Route>
       <Route path="/timeline">{() => <ProtectedRoute path="/timeline" component={TimelinePage} />}</Route>
       <Route path="/analytics/sales">{() => <ProtectedRoute path="/analytics/sales" component={SalesAnalyticsPage} />}</Route>

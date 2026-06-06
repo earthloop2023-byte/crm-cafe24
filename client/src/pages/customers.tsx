@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useLocation } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -53,6 +54,7 @@ import { insertCustomerSchema } from "@shared/schema";
 import type {
   Customer,
   ContractWithFinancials,
+  User,
 } from "@shared/schema";
 
 type SortField =
@@ -65,6 +67,7 @@ type SortField =
   | "createdAt";
 type SortDirection = "asc" | "desc";
 type DetailTab = "basic" | "contracts" | "counseling" | "history" | "files";
+type CustomerPageMode = "lead" | "company";
 
 type CustomerCounseling = {
   id: string;
@@ -140,10 +143,12 @@ const CUSTOMER_FIELD_LABELS: Record<string, string> = {
   customerCategory: "고객유형",
   serviceType: "서비스유형",
   managerName: "담당자",
+  lifecycleStage: "고객상태",
   notes: "메모",
 };
 
 const SELECT_NONE_VALUE = "__NONE__";
+const ADMIN_ROLES = ["대표이사", "총괄이사", "개발자"];
 
 function normalizeOptional(value?: string | null): string | null {
   const trimmed = (value ?? "").trim();
@@ -338,17 +343,23 @@ function isCustomerMatch(customer: Customer, contract: ContractWithFinancials): 
   return false;
 }
 
-function emptyTabGuide(title: string) {
+function emptyTabGuide(title: string, noun = "고객") {
   return (
     <div className="rounded-md border p-6 text-center text-sm text-muted-foreground">
-      {title} 탭은 고객을 먼저 저장한 뒤 사용할 수 있습니다.
+      {title} 탭은 {noun}을 먼저 저장한 뒤 사용할 수 있습니다.
     </div>
   );
 }
 
-export default function CustomersPage() {
+function isLeadCustomer(customer: Customer) {
+  return customer.lifecycleStage === "lead";
+}
+
+export default function CustomersPage({ mode = "lead" }: { mode?: CustomerPageMode }) {
   const { toast } = useToast();
   const { formatDate } = useSettings();
+  const { user: currentUser } = useAuth();
+  const [, setLocation] = useLocation();
   const [search, setSearch] = useState("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Customer | undefined>();
@@ -361,6 +372,14 @@ export default function CustomersPage() {
   const { data: customers = [], isLoading } = useQuery<CustomerListRow[]>({
     queryKey: ["/api/customers"],
   });
+  const isLeadMode = mode === "lead";
+  const isAdminUser = ADMIN_ROLES.includes(currentUser?.role || "");
+  const noun = isLeadMode ? "리드" : "고객사";
+  const managementTitle = isLeadMode ? "리드관리" : "고객사관리";
+  const canDeleteRows = isLeadMode || isAdminUser;
+  const scopedCustomers = useMemo(() => {
+    return customers.filter((customer) => (isLeadMode ? isLeadCustomer(customer) : !isLeadCustomer(customer)));
+  }, [customers, isLeadMode]);
 
   const { data: customerListContracts = [] } = useQuery<ContractWithFinancials[]>({
     queryKey: ["/api/contracts-with-financials"],
@@ -368,12 +387,12 @@ export default function CustomersPage() {
 
   const customerListSummaryById = useMemo(() => {
     const map = new Map<string, CustomerListSummary>();
-    customers.forEach((customer) => {
+    scopedCustomers.forEach((customer) => {
       map.set(customer.id, { contractCount: 0, totalContractAmount: 0, totalRefundAmount: 0 });
     });
 
     for (const contract of customerListContracts) {
-      const customer = customers.find((item) => isCustomerMatch(item, contract));
+      const customer = scopedCustomers.find((item) => isCustomerMatch(item, contract));
       if (!customer) continue;
       const current = map.get(customer.id) || { contractCount: 0, totalContractAmount: 0, totalRefundAmount: 0 };
       const isRefund = String((contract as { contractType?: string | null }).contractType || "").toLowerCase() === "refund" || toNumber(contract.cost) < 0;
@@ -388,12 +407,12 @@ export default function CustomersPage() {
     }
 
     return map;
-  }, [customerListContracts, customers]);
+  }, [customerListContracts, scopedCustomers]);
 
   const filteredCustomers = useMemo(() => {
     const keyword = search.trim();
-    if (!keyword) return customers;
-    return customers.filter((customer) => {
+    if (!keyword) return scopedCustomers;
+    return scopedCustomers.filter((customer) => {
       return matchesKoreanSearch(
         [
           customer.name,
@@ -408,7 +427,7 @@ export default function CustomersPage() {
         keyword,
       );
     });
-  }, [customers, search]);
+  }, [scopedCustomers, search]);
 
   const sortedCustomers = useMemo(() => {
     const sorted = [...filteredCustomers];
@@ -448,7 +467,7 @@ export default function CustomersPage() {
 
       const failedCount = results.filter((result) => result.status === "rejected").length;
       if (failedCount === ids.length) {
-        throw new Error("선택한 고객을 삭제하지 못했습니다.");
+        throw new Error(`선택한 ${noun}을 삭제하지 못했습니다.`);
       }
       if (failedCount > 0) {
         throw new Error(`${ids.length - failedCount}건 삭제 완료, ${failedCount}건 실패`);
@@ -458,14 +477,33 @@ export default function CustomersPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/customers"] });
       queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
       setSelectedIds(new Set());
-      toast({ title: "선택한 고객이 삭제되었습니다." });
+      toast({ title: `선택한 ${noun}이 삭제되었습니다.` });
     },
     onError: (error) => {
       queryClient.invalidateQueries({ queryKey: ["/api/customers"] });
       queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
       setSelectedIds(new Set());
       toast({
-        title: extractErrorMessage(error, "고객 삭제 중 오류가 발생했습니다."),
+        title: extractErrorMessage(error, `${noun} 삭제 중 오류가 발생했습니다.`),
+        variant: "destructive",
+      });
+    },
+  });
+
+  const convertToCompanyMutation = useMutation({
+    mutationFn: async (customerId: string) => {
+      await apiRequest("POST", `/api/customers/${customerId}/convert-to-company`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/customers"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
+      setSelectedIds(new Set());
+      toast({ title: "고객사로 전환되었습니다." });
+      setLocation("/customer-companies");
+    },
+    onError: (error) => {
+      toast({
+        title: extractErrorMessage(error, "고객사 전환 중 오류가 발생했습니다."),
         variant: "destructive",
       });
     },
@@ -496,6 +534,7 @@ export default function CustomersPage() {
   };
 
   const handleSelectAll = (checked: boolean) => {
+    if (!canDeleteRows) return;
     if (checked) {
       setSelectedIds(new Set(paginatedCustomers.map((customer) => customer.id)));
       return;
@@ -504,6 +543,7 @@ export default function CustomersPage() {
   };
 
   const handleSelectOne = (customerId: string, checked: boolean) => {
+    if (!canDeleteRows) return;
     const next = new Set(selectedIds);
     if (checked) {
       next.add(customerId);
@@ -515,9 +555,20 @@ export default function CustomersPage() {
 
   const handleBulkDelete = () => {
     if (selectedIds.size === 0) return;
-    if (!window.confirm(`선택한 고객 ${selectedIds.size}건을 삭제하시겠습니까?`)) return;
+    if (!canDeleteRows) return;
+    if (!window.confirm(`선택한 ${noun} ${selectedIds.size}건을 삭제하시겠습니까?`)) return;
     bulkDeleteMutation.mutate(Array.from(selectedIds));
   };
+
+  const handleConvertToCompany = (customer: Customer) => {
+    if (!window.confirm(`${customer.name} 리드를 고객사로 전환하시겠습니까? 전환 후 리드로 되돌릴 수 없습니다.`)) return;
+    convertToCompanyMutation.mutate(customer.id);
+  };
+
+  useEffect(() => {
+    setSelectedIds(new Set());
+    setCurrentPage(1);
+  }, [mode]);
 
   const allSelected =
     paginatedCustomers.length > 0 &&
@@ -558,7 +609,7 @@ export default function CustomersPage() {
         <div className="flex min-w-0 items-center gap-2 sm:gap-3">
           <Users className="h-5 w-5 shrink-0 text-primary sm:h-6 sm:w-6" />
           <h1 className="truncate text-lg font-bold leading-tight sm:text-xl" data-testid="text-customers-title">
-            고객목록
+            {managementTitle}
           </h1>
         </div>
 
@@ -575,7 +626,7 @@ export default function CustomersPage() {
                 setSearch(event.target.value);
                 setCurrentPage(1);
               }}
-              placeholder="고객명/전화번호/유형 검색"
+              placeholder={`${noun}명/전화번호/유형 검색`}
               className="h-10 w-full rounded-none pl-9 pr-9 text-sm lg:w-64"
               data-testid="input-search-customers"
             />
@@ -585,20 +636,22 @@ export default function CustomersPage() {
             variant="outline"
             className="h-10 rounded-none px-3"
             onClick={handleBulkDelete}
-            disabled={selectedIds.size === 0 || bulkDeleteMutation.isPending}
+            disabled={!canDeleteRows || selectedIds.size === 0 || bulkDeleteMutation.isPending}
             data-testid="button-bulk-delete"
           >
             <Trash2 className="h-4 w-4 lg:mr-1" />
             <span className="hidden lg:inline">삭제</span>
           </Button>
 
-          <Button
-            className="h-10 rounded-none bg-primary px-4 hover:bg-primary/90"
-            onClick={openCreateDialog}
-            data-testid="button-add-customer"
-          >
-            고객 등록
-          </Button>
+          {isLeadMode ? (
+            <Button
+              className="h-10 rounded-none bg-primary px-4 hover:bg-primary/90"
+              onClick={openCreateDialog}
+              data-testid="button-add-customer"
+            >
+              리드 등록
+            </Button>
+          ) : null}
         </div>
       </div>
       </div>
@@ -611,10 +664,11 @@ export default function CustomersPage() {
                 <Checkbox
                   checked={allSelected}
                   onCheckedChange={(checked) => handleSelectAll(checked === true)}
+                  disabled={!canDeleteRows}
                   data-testid="checkbox-select-all"
                 />
               </TableHead>
-              <SortableHeader field="name">고객명</SortableHeader>
+              <SortableHeader field="name">{noun}명</SortableHeader>
               <SortableHeader field="phone">전화번호</SortableHeader>
               <SortableHeader field="customerType">고객구분</SortableHeader>
               <SortableHeader field="customerCategory">고객유형</SortableHeader>
@@ -622,13 +676,14 @@ export default function CustomersPage() {
               <TableHead className="whitespace-nowrap text-right text-xs">총 계약금액</TableHead>
               <TableHead className="whitespace-nowrap text-right text-xs">총 환불 금액</TableHead>
               <TableHead className="text-xs">마지막 상담 이력</TableHead>
+              {isLeadMode ? <TableHead className="whitespace-nowrap text-right text-xs">관리</TableHead> : null}
             </TableRow>
           </TableHeader>
           <TableBody>
             {paginatedCustomers.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={9} className="py-8 text-center text-muted-foreground">
-                  {search ? "검색 결과가 없습니다." : "등록된 고객이 없습니다."}
+                <TableCell colSpan={isLeadMode ? 10 : 9} className="py-8 text-center text-muted-foreground">
+                  {search ? "검색 결과가 없습니다." : `등록된 ${noun}이 없습니다.`}
                 </TableCell>
               </TableRow>
             ) : (
@@ -638,6 +693,7 @@ export default function CustomersPage() {
                     <Checkbox
                       checked={selectedIds.has(customer.id)}
                       onCheckedChange={(checked) => handleSelectOne(customer.id, checked === true)}
+                      disabled={!canDeleteRows}
                       data-testid={`checkbox-customer-${customer.id}`}
                     />
                   </TableCell>
@@ -664,6 +720,21 @@ export default function CustomersPage() {
                       </span>
                     ) : "-"}
                   </TableCell>
+                  {isLeadMode ? (
+                    <TableCell className="text-right">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 rounded-none whitespace-nowrap"
+                        onClick={() => handleConvertToCompany(customer)}
+                        disabled={convertToCompanyMutation.isPending}
+                        data-testid={`button-convert-customer-${customer.id}`}
+                      >
+                        고객사 전환
+                      </Button>
+                    </TableCell>
+                  ) : null}
                 </TableRow>
               ))
             )}
@@ -695,6 +766,7 @@ export default function CustomersPage() {
       <CustomerDetailDialog
         open={isDialogOpen}
         customer={editingCustomer}
+        mode={mode}
         onOpenChange={(nextOpen) => {
           if (!nextOpen) {
             closeDialog();
@@ -711,11 +783,13 @@ export default function CustomersPage() {
 function CustomerDetailDialog({
   open,
   customer,
+  mode,
   onOpenChange,
   onSaved,
 }: {
   open: boolean;
   customer?: Customer;
+  mode: CustomerPageMode;
   onOpenChange: (open: boolean) => void;
   onSaved: () => void;
 }) {
@@ -728,6 +802,11 @@ function CustomerDetailDialog({
 
   const customerId = customer?.id ?? "";
   const isEditMode = Boolean(customerId);
+  const isLeadMode = mode === "lead";
+  const isAdminUser = ADMIN_ROLES.includes(currentUser?.role || "");
+  const noun = isLeadMode ? "리드" : "고객사";
+  const canEditName = isLeadMode || !isEditMode || isAdminUser;
+  const visibleTabs: DetailTab[] = isLeadMode ? ["basic", "counseling", "history"] : ["basic", "contracts", "counseling", "history", "files"];
 
   const form = useForm<CustomerFormData>({
     resolver: zodResolver(customerFormSchema),
@@ -737,7 +816,7 @@ function CustomerDetailDialog({
       phone: customer?.phone || "",
       company: customer?.company || "",
       status: customer?.status || "active",
-      customerType: customer?.customerType || "",
+      customerType: isLeadMode ? customer?.customerType || "" : "계약완료",
       customerCategory: customer?.customerCategory || "",
       serviceType: customer?.serviceType || "",
       managerName: customer?.managerName || currentUser?.name || "",
@@ -760,7 +839,7 @@ function CustomerDetailDialog({
       phone: customer?.phone || "",
       company: customer?.company || "",
       status: customer?.status || "active",
-      customerType: customer?.customerType || "",
+      customerType: isLeadMode ? customer?.customerType || "" : "계약완료",
       customerCategory: customer?.customerCategory || "",
       serviceType: customer?.serviceType || "",
       managerName: customer?.managerName || currentUser?.name || "",
@@ -773,7 +852,31 @@ function CustomerDetailDialog({
     setSelectedFile(null);
     setFileNote("");
     setActiveTab("basic");
-  }, [customerId, customer, currentUser?.name, form, counselingForm]);
+  }, [customerId, customer, currentUser?.name, form, counselingForm, isLeadMode]);
+
+  useEffect(() => {
+    if (!visibleTabs.includes(activeTab)) {
+      setActiveTab("basic");
+    }
+  }, [activeTab, visibleTabs]);
+
+  const { data: users = [] } = useQuery<User[]>({
+    queryKey: ["/api/users"],
+    enabled: open,
+  });
+
+  const managerOptions = useMemo(() => {
+    const names = new Set<string>();
+    users
+      .filter((user) => user.isActive !== false)
+      .forEach((user) => {
+        if (user.name?.trim()) names.add(user.name.trim());
+      });
+    const currentManagerName = String(form.watch("managerName") || customer?.managerName || "").trim();
+    if (currentManagerName) names.add(currentManagerName);
+    if (currentUser?.name?.trim()) names.add(currentUser.name.trim());
+    return Array.from(names).sort((a, b) => a.localeCompare(b, "ko-KR"));
+  }, [customer?.managerName, currentUser?.name, form, users]);
 
   const { data: allContracts = [], isLoading: contractsLoading } = useQuery<ContractWithFinancials[]>({
     queryKey: ["/api/contracts-with-financials"],
@@ -890,11 +993,12 @@ function CustomerDetailDialog({
         phone: normalizeOptional(data.phone),
         company: normalizeOptional(data.company),
         status: normalizeOptional(data.status) || "active",
-        customerType: normalizeOptional(data.customerType),
+        customerType: isLeadMode ? normalizeOptional(data.customerType) : "계약완료",
         customerCategory: normalizeOptional(data.customerCategory),
         serviceType: normalizeOptional(data.serviceType),
         managerName: normalizeOptional(data.managerName) || normalizeOptional(currentUser?.name),
         notes: normalizeOptional(data.notes),
+        lifecycleStage: isLeadMode ? "lead" : "customer",
       };
 
       if (isEditMode) {
@@ -918,13 +1022,13 @@ function CustomerDetailDialog({
       }
 
       toast({
-        title: result === "update" ? "고객 정보가 수정되었습니다." : "고객이 등록되었습니다.",
+        title: result === "update" ? `${noun} 정보가 수정되었습니다.` : `${noun}이 등록되었습니다.`,
       });
       onSaved();
     },
     onError: (error) => {
       toast({
-        title: extractErrorMessage(error, "고객 저장 중 오류가 발생했습니다."),
+        title: extractErrorMessage(error, `${noun} 저장 중 오류가 발생했습니다.`),
         variant: "destructive",
       });
     },
@@ -944,7 +1048,7 @@ function CustomerDetailDialog({
         counselingDate: new Date().toISOString().slice(0, 10),
         content: "",
       });
-      toast({ title: "고객 상담 내용이 등록되었습니다." });
+      toast({ title: `${noun} 상담 내용이 등록되었습니다.` });
     },
     onError: (error) => {
       toast({
@@ -1067,27 +1171,33 @@ function CustomerDetailDialog({
         style={{ width: "1200px", maxWidth: "97vw" }}
       >
         <DialogHeader>
-          <DialogTitle>{isEditMode ? "고객 상세 정보" : "새 고객 등록"}</DialogTitle>
+          <DialogTitle>{isEditMode ? `${noun} 상세 정보` : `새 ${noun} 등록`}</DialogTitle>
           <DialogDescription>
-            기본정보, 계약관리, 고객상담, 변경이력, 파일 정보를 한 화면에서 관리합니다.
+            {isLeadMode
+              ? "기본정보, 리드상담, 변경이력을 관리합니다."
+              : "기본정보, 계약관리, 고객상담, 변경이력, 파일 정보를 한 화면에서 관리합니다."}
           </DialogDescription>
         </DialogHeader>
 
         <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as DetailTab)}>
           <TabsList className="w-full justify-start rounded-none">
             <TabsTrigger value="basic">기본정보</TabsTrigger>
-            <TabsTrigger value="contracts" disabled={!isEditMode}>
-              계약관리
-            </TabsTrigger>
+            {!isLeadMode ? (
+              <TabsTrigger value="contracts" disabled={!isEditMode}>
+                계약관리
+              </TabsTrigger>
+            ) : null}
             <TabsTrigger value="counseling" disabled={!isEditMode}>
-              고객상담
+              {isLeadMode ? "리드상담" : "고객상담"}
             </TabsTrigger>
             <TabsTrigger value="history" disabled={!isEditMode}>
               변경이력
             </TabsTrigger>
-            <TabsTrigger value="files" disabled={!isEditMode}>
-              파일
-            </TabsTrigger>
+            {!isLeadMode ? (
+              <TabsTrigger value="files" disabled={!isEditMode}>
+                파일
+              </TabsTrigger>
+            ) : null}
           </TabsList>
 
           <TabsContent value="basic" className="space-y-4">
@@ -1099,12 +1209,13 @@ function CustomerDetailDialog({
                     name="name"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>고객명 *</FormLabel>
+                        <FormLabel>{noun}명 *</FormLabel>
                         <FormControl>
                           <Input
                             {...field}
-                            placeholder="고객명을 입력하세요"
+                            placeholder={`${noun}명을 입력하세요`}
                             className="rounded-none"
+                            disabled={!canEditName}
                             data-testid="input-customer-name"
                           />
                         </FormControl>
@@ -1119,15 +1230,24 @@ function CustomerDetailDialog({
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>담당자</FormLabel>
-                        <FormControl>
-                          <Input
-                            {...field}
-                            value={field.value || ""}
-                            placeholder="담당자명을 입력하세요"
-                            className="rounded-none"
-                            data-testid="input-customer-manager"
-                          />
-                        </FormControl>
+                        <Select
+                          onValueChange={(value) => field.onChange(value === SELECT_NONE_VALUE ? "" : value)}
+                          value={field.value && field.value.length > 0 ? field.value : SELECT_NONE_VALUE}
+                        >
+                          <FormControl>
+                            <SelectTrigger className="rounded-none" data-testid="select-customer-manager">
+                              <SelectValue placeholder="담당자 선택" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent className="rounded-none">
+                            <SelectItem value={SELECT_NONE_VALUE}>선택 안함</SelectItem>
+                            {managerOptions.map((managerName) => (
+                              <SelectItem key={managerName} value={managerName}>
+                                {managerName}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -1211,6 +1331,7 @@ function CustomerDetailDialog({
                           <SelectContent className="rounded-none">
                             <SelectItem value={SELECT_NONE_VALUE}>선택 안함</SelectItem>
                             <SelectItem value="슬롯">슬롯</SelectItem>
+                            <SelectItem value="월보장">월보장</SelectItem>
                             <SelectItem value="바이럴">바이럴</SelectItem>
                             <SelectItem value="종합마케팅">종합마케팅</SelectItem>
                             <SelectItem value="복합상품">복합상품</SelectItem>
@@ -1227,10 +1348,11 @@ function CustomerDetailDialog({
                     name="customerType"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>고객구분</FormLabel>
+                        <FormLabel>{isLeadMode ? "리드구분" : "고객구분"}</FormLabel>
                         <Select
                           onValueChange={(value) => field.onChange(value === SELECT_NONE_VALUE ? "" : value)}
-                          value={field.value && field.value.length > 0 ? field.value : SELECT_NONE_VALUE}
+                          value={isLeadMode ? field.value && field.value.length > 0 ? field.value : SELECT_NONE_VALUE : "계약완료"}
+                          disabled={!isLeadMode}
                         >
                           <FormControl>
                             <SelectTrigger className="rounded-none" data-testid="select-customer-type">
@@ -1240,7 +1362,7 @@ function CustomerDetailDialog({
                           <SelectContent className="rounded-none">
                             <SelectItem value={SELECT_NONE_VALUE}>선택 안함</SelectItem>
                             <SelectItem value="가망">가망</SelectItem>
-                            <SelectItem value="계약">계약</SelectItem>
+                            {!isLeadMode ? <SelectItem value="계약완료">계약완료</SelectItem> : null}
                             <SelectItem value="종료">종료</SelectItem>
                             <SelectItem value="기타">기타</SelectItem>
                           </SelectContent>
@@ -1255,7 +1377,7 @@ function CustomerDetailDialog({
                     name="customerCategory"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>고객유형</FormLabel>
+                        <FormLabel>{isLeadMode ? "리드유형" : "고객유형"}</FormLabel>
                         <Select
                           onValueChange={(value) => field.onChange(value === SELECT_NONE_VALUE ? "" : value)}
                           value={field.value && field.value.length > 0 ? field.value : SELECT_NONE_VALUE}
@@ -1267,7 +1389,7 @@ function CustomerDetailDialog({
                           </FormControl>
                           <SelectContent className="rounded-none">
                             <SelectItem value={SELECT_NONE_VALUE}>선택 안함</SelectItem>
-                            <SelectItem value="고객사">고객사</SelectItem>
+                            <SelectItem value={isLeadMode ? "리드" : "고객사"}>{isLeadMode ? "리드" : "고객사"}</SelectItem>
                             <SelectItem value="대행사">대행사</SelectItem>
                             <SelectItem value="총판">총판</SelectItem>
                             <SelectItem value="실행사">실행사</SelectItem>
@@ -1290,7 +1412,7 @@ function CustomerDetailDialog({
                         <Textarea
                           {...field}
                           value={field.value || ""}
-                          placeholder="고객 관련 메모를 입력하세요"
+                          placeholder={`${noun} 관련 메모를 입력하세요`}
                           className="min-h-[90px] rounded-none"
                           data-testid="textarea-customer-notes"
                         />
@@ -1322,7 +1444,7 @@ function CustomerDetailDialog({
               </form>
             </Form>
 
-            {isEditMode ? (
+            {!isLeadMode && isEditMode ? (
               <>
                 <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
                   <Card className="rounded-none">
@@ -1361,11 +1483,11 @@ function CustomerDetailDialog({
                 </div>
 
               </>
-            ) : (
+            ) : !isLeadMode ? (
               <div className="rounded-md border p-4 text-sm text-muted-foreground">
-                고객을 저장하면 계약 요약(계약 수/계약금액/환불금액)이 자동 표시됩니다.
+                고객사를 저장하면 계약 요약(계약 수/계약금액/환불금액)이 자동 표시됩니다.
               </div>
-            )}
+            ) : null}
           </TabsContent>
 
           <TabsContent value="contracts">

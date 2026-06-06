@@ -6,6 +6,11 @@ import { allPages, departmentDefaultPages } from "@shared/schema";
 import { Skeleton } from "@/components/ui/skeleton";
 
 const ADMIN_ROLES = ["대표이사", "총괄이사", "개발자"];
+const PATH_PERMISSION_ALIAS: Record<string, string> = {
+  "/customers": "customers",
+  "/leads": "customers",
+  "/customer-companies": "customers",
+};
 
 interface PermissionsContextType {
   allowedPages: string[];
@@ -63,6 +68,8 @@ export function PermissionsProvider({ children }: { children: ReactNode }) {
   const hasPathAccess = (path: string): boolean => {
     if (isAdmin) return true;
     if (!isReady) return false;
+    const aliasPageKey = PATH_PERMISSION_ALIAS[path];
+    if (aliasPageKey) return hasPageAccess(aliasPageKey);
     const page = allPages.find(p => p.path === path);
     if (!page) return false;
     return hasPageAccess(page.key);

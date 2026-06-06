@@ -330,8 +330,43 @@ async function ensureProductColumns() {
 async function ensureCustomerKeepColumns() {
   await pool.query(`
     ALTER TABLE customers
-    ADD COLUMN IF NOT EXISTS keep_balance_adjustment integer NOT NULL DEFAULT 0
+    ADD COLUMN IF NOT EXISTS keep_balance_adjustment integer NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS lifecycle_stage text NOT NULL DEFAULT 'customer'
   `);
+}
+
+async function ensureCustomerLifecycleSeedData() {
+  await pool.query(`
+    UPDATE customers
+    SET lifecycle_stage = 'customer'
+    WHERE lifecycle_stage IS NULL
+       OR lifecycle_stage = ''
+       OR lifecycle_stage NOT IN ('lead', 'customer')
+  `);
+
+  await pool.query(`
+    UPDATE customers
+    SET customer_type = '계약완료'
+    WHERE lifecycle_stage = 'customer'
+      AND (customer_type IS NULL OR customer_type = '' OR customer_type = '계약')
+  `);
+
+  await pool.query(
+    `
+      INSERT INTO customers (
+        name, status, customer_type, lifecycle_stage, manager_name, created_at
+      )
+      SELECT $1, 'active', '가망', 'lead', $2, now()
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM customers
+        WHERE lifecycle_stage = 'lead'
+          AND name = $1
+          AND manager_name = $2
+      )
+    `,
+    ["테스트", "김상만"],
+  );
 }
 
 async function ensureContractColumns() {
@@ -557,6 +592,17 @@ async function getContractCountByProductReference(productId: string, productName
     [productId, productName],
   );
   return Number(result.rows[0]?.count || 0);
+}
+
+function isCustomerLifecycleStage(value: unknown, stage: "lead" | "customer") {
+  return String(value || "").trim() === stage;
+}
+
+async function convertCustomerToCompany(customerId: string) {
+  return storage.updateCustomer(customerId, {
+    lifecycleStage: "customer",
+    customerType: "계약완료",
+  } as any);
 }
 
 const BACKUP_MAX_BYTES = 200 * 1024 * 1024;
@@ -2601,6 +2647,15 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  if (!shouldRunRuntimeSchemaEnsure() && hasDatabaseConfig) {
+    try {
+      await ensureCustomerKeepColumns();
+      await ensureCustomerLifecycleSeedData();
+    } catch (error) {
+      console.warn("Customer lifecycle ensure skipped:", error);
+    }
+  }
+
   if (shouldRunRuntimeSchemaEnsure()) {
     await ensureCustomerDetailTables();
     await ensureDealCustomerDbColumns();
@@ -2608,6 +2663,7 @@ export async function registerRoutes(
     await ensureRegionalManagementFeeTable();
     await ensureRegionalCustomerListTable();
     await ensureCustomerKeepColumns();
+    await ensureCustomerLifecycleSeedData();
     await ensureProductColumns();
     await ensureContractColumns();
     await ensureFinancialHistoryColumns();
@@ -3319,7 +3375,12 @@ export async function registerRoutes(
 
   app.post("/api/customers", async (req, res) => {
     try {
-      const parsed = insertCustomerSchema.safeParse(req.body);
+      const body = { ...(req.body ?? {}) };
+      body.lifecycleStage = body.lifecycleStage === "lead" ? "lead" : "customer";
+      if (body.lifecycleStage === "customer") {
+        body.customerType = "계약완료";
+      }
+      const parsed = insertCustomerSchema.safeParse(body);
       if (!parsed.success) {
         return res.status(400).json({ error: "Invalid customer data", details: parsed.error });
       }
@@ -3333,13 +3394,32 @@ export async function registerRoutes(
 
   app.put("/api/customers/:id", async (req, res) => {
     try {
-      const parsed = insertCustomerSchema.partial().safeParse(req.body);
+      const body = { ...(req.body ?? {}) };
+      if (body.lifecycleStage === "customer") {
+        body.customerType = "계약완료";
+      }
+      const parsed = insertCustomerSchema.partial().safeParse(body);
       if (!parsed.success) {
         return res.status(400).json({ error: "Invalid customer data", details: parsed.error });
       }
       const beforeCustomer = await storage.getCustomer(req.params.id);
       if (!beforeCustomer) {
         return res.status(404).json({ error: "Customer not found" });
+      }
+      const currentUser = req.session.userId ? await storage.getUser(req.session.userId) : null;
+      const isAdminUser = isPermissionAdminRole(currentUser?.role);
+      const isCompanyCustomer = isCustomerLifecycleStage(beforeCustomer.lifecycleStage, "customer");
+      const requestedName = typeof parsed.data.name === "string" ? parsed.data.name.trim() : undefined;
+      if (
+        isCompanyCustomer &&
+        !isAdminUser &&
+        requestedName !== undefined &&
+        requestedName !== String(beforeCustomer.name || "").trim()
+      ) {
+        return res.status(403).json({ error: "고객사명은 관리자만 수정할 수 있습니다." });
+      }
+      if (isCompanyCustomer && !isAdminUser && parsed.data.lifecycleStage === "lead") {
+        return res.status(403).json({ error: "고객사는 리드로 되돌릴 수 없습니다." });
       }
 
       const customer = await storage.updateCustomer(req.params.id, parsed.data);
@@ -3395,11 +3475,72 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/customers/:id/convert-to-company", async (req, res) => {
+    try {
+      const beforeCustomer = await storage.getCustomer(req.params.id);
+      if (!beforeCustomer) {
+        return res.status(404).json({ error: "Customer not found" });
+      }
+      if (isCustomerLifecycleStage(beforeCustomer.lifecycleStage, "customer")) {
+        return res.json(beforeCustomer);
+      }
+
+      const customer = await convertCustomerToCompany(req.params.id);
+      if (!customer) {
+        return res.status(404).json({ error: "Customer not found" });
+      }
+
+      const encryptedChangeHistory = encryptRawTablePayload("customer_change_histories", {
+        before_data: JSON.stringify({
+          lifecycleStage: beforeCustomer.lifecycleStage,
+          customerType: beforeCustomer.customerType,
+        }),
+        after_data: JSON.stringify({
+          lifecycleStage: customer.lifecycleStage,
+          customerType: customer.customerType,
+        }),
+      });
+
+      await pool.query(
+        `
+          INSERT INTO customer_change_histories (
+            customer_id, change_type, changed_fields, before_data, after_data, created_by
+          ) VALUES ($1, $2, $3, $4, $5, $6)
+        `,
+        [
+          req.params.id,
+          "convert_to_company",
+          "lifecycleStage,customerType",
+          encryptedChangeHistory.before_data,
+          encryptedChangeHistory.after_data,
+          await getCurrentUserName(req),
+        ],
+      );
+
+      await writeEntityAuditLog(
+        req,
+        "customer",
+        "update",
+        customer.name || req.params.id,
+        `customerId=${req.params.id}, action=convert_to_company`,
+      );
+
+      res.json(customer);
+    } catch (error) {
+      console.error("Error converting customer to company:", error);
+      res.status(500).json({ error: "Failed to convert customer to company" });
+    }
+  });
+
   app.delete("/api/customers/:id", async (req, res) => {
     try {
       const customer = await storage.getCustomer(req.params.id);
       if (!customer) {
         return res.status(404).json({ error: "Customer not found" });
+      }
+      const currentUser = req.session.userId ? await storage.getUser(req.session.userId) : null;
+      if (isCustomerLifecycleStage(customer.lifecycleStage, "customer") && !isPermissionAdminRole(currentUser?.role)) {
+        return res.status(403).json({ error: "고객사는 관리자만 삭제할 수 있습니다." });
       }
       const contractCount = await getContractCountByCustomerId(req.params.id);
       if (contractCount > 0) {
@@ -4803,6 +4944,20 @@ export async function registerRoutes(
         contract as Contract,
         String((req.session as any).userId || "system"),
       );
+
+      if (contract.customerId) {
+        const linkedCustomer = await storage.getCustomer(contract.customerId);
+        if (linkedCustomer && isCustomerLifecycleStage(linkedCustomer.lifecycleStage, "lead")) {
+          await convertCustomerToCompany(contract.customerId);
+          await writeEntityAuditLog(
+            req,
+            "customer",
+            "update",
+            linkedCustomer.name || contract.customerId,
+            `customerId=${contract.customerId}, action=auto_convert_by_contract, contractId=${contract.id}`,
+          );
+        }
+      }
 
       res.status(201).json(contract);
     } catch (error) {
@@ -7878,6 +8033,8 @@ export async function registerRoutes(
               const [createdCustomer] = await tx.insert(customers).values({
                 name: row.customerName,
                 status: "active",
+                customerType: "계약완료",
+                lifecycleStage: "customer",
               }).returning();
               customer = createdCustomer;
               customerMap.set(row.customerName, createdCustomer);

@@ -27,6 +27,7 @@ import {
   LogOut,
   ChevronDown,
   Calculator,
+  Users,
 } from "lucide-react";
 import { usePermissions } from "@/lib/permissions";
 
@@ -45,11 +46,18 @@ const menuItems: MenuItem[] = [
     children: [{ title: "\uB9E4\uCD9C\uBD84\uC11D", url: "/analytics/sales" }],
   },
   {
+    title: "\uB9AC\uB4DC/\uACE0\uAC1D\uC0AC",
+    icon: Users,
+    children: [
+      { title: "\uB9AC\uB4DC", url: "/leads" },
+      { title: "\uACE0\uAC1D\uC0AC", url: "/customer-companies" },
+    ],
+  },
+  {
     title: "\uACC4\uC57D/\uB9E4\uCD9C",
     icon: FileText,
     children: [
       { title: "\uACC4\uC57D\uAD00\uB9AC", url: "/contracts" },
-      { title: "\uACE0\uAC1D\uAD00\uB9AC", url: "/customers" },
       { title: "\uC0C1\uD488\uAD00\uB9AC", url: "/products" },
     ],
   },
@@ -80,6 +88,7 @@ export function AppSidebar() {
   const [openMenus, setOpenMenus] = useState<string[]>([
     "\uD1B5\uACC4/\uBD84\uC11D",
     "\uACC4\uC57D/\uB9E4\uCD9C",
+    "\uB9AC\uB4DC/\uACE0\uAC1D\uC0AC",
     "\uC7AC\uBB34/\uD68C\uACC4",
     "\uC124\uC815",
   ]);
