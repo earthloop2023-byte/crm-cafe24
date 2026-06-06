@@ -613,14 +613,14 @@ export default function CustomersPage() {
                   data-testid="checkbox-select-all"
                 />
               </TableHead>
-              <SortableHeader field="name">???</SortableHeader>
-              <SortableHeader field="phone">????</SortableHeader>
-              <SortableHeader field="customerType">????</SortableHeader>
-              <SortableHeader field="customerCategory">????</SortableHeader>
-              <TableHead className="whitespace-nowrap text-right text-xs">???</TableHead>
-              <TableHead className="whitespace-nowrap text-right text-xs">? ????</TableHead>
-              <TableHead className="whitespace-nowrap text-right text-xs">? ?? ??</TableHead>
-              <TableHead className="text-xs">??? ?? ??</TableHead>
+              <SortableHeader field="name">고객명</SortableHeader>
+              <SortableHeader field="phone">전화번호</SortableHeader>
+              <SortableHeader field="customerType">고객구분</SortableHeader>
+              <SortableHeader field="customerCategory">고객유형</SortableHeader>
+              <TableHead className="whitespace-nowrap text-right text-xs">계약수</TableHead>
+              <TableHead className="whitespace-nowrap text-right text-xs">총 계약금액</TableHead>
+              <TableHead className="whitespace-nowrap text-right text-xs">총 환불 금액</TableHead>
+              <TableHead className="text-xs">마지막 상담 이력</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>

@@ -3138,23 +3138,27 @@ export async function registerRoutes(
         return;
       }
 
-      const counselingResult = await pool.query(
-        `
-          SELECT DISTINCT ON (customer_id)
-                 customer_id AS "customerId",
-                 counseling_date AS "lastCounselingDate",
-                 content,
-                 created_at AS "lastCounselingCreatedAt"
-          FROM customer_counselings
-          ORDER BY customer_id, counseling_date DESC, created_at DESC
-        `,
-      );
-      const latestCounselingByCustomerId = new Map(
-        counselingResult.rows.map((row) => {
+      const latestCounselingByCustomerId = new Map<string, any>();
+      try {
+        await ensureCustomerDetailTables();
+        const counselingResult = await pool.query(
+          `
+            SELECT DISTINCT ON (customer_id)
+                   customer_id AS "customerId",
+                   counseling_date AS "lastCounselingDate",
+                   content,
+                   created_at AS "lastCounselingCreatedAt"
+            FROM customer_counselings
+            ORDER BY customer_id, counseling_date DESC, created_at DESC
+          `,
+        );
+        counselingResult.rows.forEach((row) => {
           const decrypted = decryptRawTableRow("customer_counselings", row);
-          return [String(decrypted.customerId), decrypted];
-        }),
-      );
+          latestCounselingByCustomerId.set(String(decrypted.customerId), decrypted);
+        });
+      } catch (counselingError) {
+        console.warn("Customer latest counseling data skipped:", counselingError);
+      }
 
       res.json(
         customers.map((customer) => {
