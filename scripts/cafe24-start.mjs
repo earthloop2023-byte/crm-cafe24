@@ -55,7 +55,7 @@ await import("../dist/index.js");
 
 if (String(process.env.SKIP_DB_PUSH || "").trim().toLowerCase() !== "true" && hasDatabaseEnv()) {
   const npxCommand = process.platform === "win32" ? "npx.cmd" : "npx";
-  const args = ["--yes", "drizzle-kit", "push", "--config", "drizzle.config.ts"];
+  const args = ["--yes", "drizzle-kit", "push", "--config", "drizzle.config.ts", "--yes"];
   console.log(`[cafe24-start] running ${npxCommand} ${args.join(" ")}`);
   void run(npxCommand, args)
     .then(() => console.log("[cafe24-start] database schema push completed"))
