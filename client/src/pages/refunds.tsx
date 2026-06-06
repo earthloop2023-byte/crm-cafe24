@@ -433,7 +433,7 @@ export default function RefundsPage() {
                           disabled={withdrawRefundMutation.isPending}
                           data-testid={`button-withdraw-refund-${row.id.replace(/[^a-zA-Z0-9_-]/g, "-")}`}
                         >
-                          ??
+                          철회
                         </Button>
                       </td>
                     </tr>
