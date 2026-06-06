@@ -46,6 +46,9 @@ const WORK_STATUS_ON_LEAVE = "\uD734\uC9C1\uC911";
 const WORK_STATUS_RESIGNED = "\uD1F4\uC0AC";
 const workStatusOptions = [WORK_STATUS_EMPLOYED, WORK_STATUS_ON_LEAVE, WORK_STATUS_RESIGNED] as const;
 
+const isHiddenSystemAdmin = (user: User) =>
+  user.loginId?.trim().toLowerCase() === "admin" || user.id === "__local_admin__";
+
 function createUserFormSchema(pwMinLength: number) {
   return z.object({
     loginId: z.string().min(1, "로그인ID를 입력하세요."),
@@ -234,7 +237,7 @@ export default function Users() {
 
   const filteredUsers = useMemo(
     () =>
-      users.filter((user) => {
+      users.filter((user) => !isHiddenSystemAdmin(user)).filter((user) => {
         const q = searchTerm.trim().toLowerCase();
         if (!q) return true;
         return (
