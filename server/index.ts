@@ -136,6 +136,10 @@ const PgSession = connectPgSimple(session);
 const runtimeNodeEnv = (process.env.NODE_ENV || "production").toLowerCase();
 const isProduction = runtimeNodeEnv === "production";
 const configuredSessionSecret = (process.env.SESSION_SECRET || "").trim();
+const resolvedSessionSecret =
+  configuredSessionSecret ||
+  (process.env.PII_ENCRYPTION_KEY || "").trim() ||
+  (process.env.BACKUP_ENCRYPTION_KEY || "").trim();
 
 function parseBooleanEnv(value?: string): boolean | undefined {
   const normalized = (value || "").trim().toLowerCase();
@@ -194,7 +198,7 @@ if (trustProxyValue !== false) {
   app.set("trust proxy", trustProxyValue);
 }
 
-if (isProduction && !configuredSessionSecret) {
+if (isProduction && !resolvedSessionSecret) {
   throw new Error("SESSION_SECRET must be set in production.");
 }
 
@@ -223,7 +227,7 @@ app.use(
           pruneSessionInterval: sessionPruneInterval,
         })
       : undefined,
-    secret: configuredSessionSecret || "crm-dev-session-secret",
+    secret: resolvedSessionSecret || "crm-dev-session-secret",
     resave: false,
     saveUninitialized: false,
     proxy: trustProxyValue !== false,

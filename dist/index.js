@@ -9515,6 +9515,7 @@ var PgSession = connectPgSimple(session);
 var runtimeNodeEnv = (process.env.NODE_ENV || "production").toLowerCase();
 var isProduction = runtimeNodeEnv === "production";
 var configuredSessionSecret = (process.env.SESSION_SECRET || "").trim();
+var resolvedSessionSecret = configuredSessionSecret || (process.env.PII_ENCRYPTION_KEY || "").trim() || (process.env.BACKUP_ENCRYPTION_KEY || "").trim();
 function parseBooleanEnv(value) {
   const normalized = (value || "").trim().toLowerCase();
   if (!normalized) return void 0;
@@ -9561,7 +9562,7 @@ var trustProxyValue = resolveTrustProxyValue(process.env.TRUST_PROXY);
 if (trustProxyValue !== false) {
   app.set("trust proxy", trustProxyValue);
 }
-if (isProduction && !configuredSessionSecret) {
+if (isProduction && !resolvedSessionSecret) {
   throw new Error("SESSION_SECRET must be set in production.");
 }
 assertPiiEncryptionReadyForProduction();
@@ -9585,7 +9586,7 @@ app.use(
       createTableIfMissing: true,
       pruneSessionInterval: sessionPruneInterval
     }) : void 0,
-    secret: configuredSessionSecret || "crm-dev-session-secret",
+    secret: resolvedSessionSecret || "crm-dev-session-secret",
     resave: false,
     saveUninitialized: false,
     proxy: trustProxyValue !== false,
