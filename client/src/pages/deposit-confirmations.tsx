@@ -336,6 +336,7 @@ export default function DepositConfirmationsPage() {
       return;
     }
     if (selectedIds.size === 0) return;
+    if (!window.confirm(`선택한 입금내역 ${selectedIds.size}건을 삭제하시겠습니까?\n삭제 후에는 복구할 수 없습니다.`)) return;
     bulkDeleteMutation.mutate(Array.from(selectedIds));
   };
 
@@ -344,6 +345,13 @@ export default function DepositConfirmationsPage() {
       showDepositActionDeniedMessage();
       return;
     }
+    const targetDeposit = depositsData.find((deposit) => deposit.id === id);
+    const depositorName = String(targetDeposit?.depositorName || "").trim();
+    const depositAmount = Number(targetDeposit?.depositAmount) || 0;
+    const targetLabel = depositorName
+      ? `${depositorName}${depositAmount > 0 ? ` / ${formatAmount(depositAmount)}원` : ""}`
+      : "선택한 입금내역";
+    if (!window.confirm(`${targetLabel}을 삭제하시겠습니까?\n삭제 후에는 복구할 수 없습니다.`)) return;
     singleDeleteMutation.mutate(id);
   };
 
