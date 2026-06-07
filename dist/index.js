@@ -6839,6 +6839,27 @@ async function registerRoutes(httpServer2, app2) {
     }
     return void 0;
   };
+  const getDepositUploadRows = (sheet) => {
+    const matrix = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "", raw: true });
+    const headerRowIndex = matrix.findIndex((row) => {
+      const keys = row.map((cell) => normalizeDepositUploadKey(cell));
+      return keys.includes(normalizeDepositUploadKey("\uAC70\uB798\uC77C\uC2DC")) && keys.includes(normalizeDepositUploadKey("\uBCF4\uB0B8\uBD84/\uBC1B\uB294\uBD84")) && keys.includes(normalizeDepositUploadKey("\uC785\uAE08\uC561(\uC6D0)"));
+    });
+    if (headerRowIndex >= 0) {
+      return {
+        rows: XLSX.utils.sheet_to_json(sheet, {
+          defval: "",
+          raw: true,
+          range: headerRowIndex
+        }),
+        defaultDepositBank: "\uAD6D\uBBFC\uC740\uD589"
+      };
+    }
+    return {
+      rows: XLSX.utils.sheet_to_json(sheet, { defval: "", raw: true }),
+      defaultDepositBank: void 0
+    };
+  };
   const parseDepositUploadDate = (rawValue) => {
     if (typeof rawValue === "number") {
       const excelEpochUtc = Date.UTC(1899, 11, 30);
@@ -6852,6 +6873,19 @@ async function registerRoutes(httpServer2, app2) {
     const rawText = String(rawValue ?? "").trim();
     if (!rawText) return /* @__PURE__ */ new Date();
     const normalizedText = rawText.replace(/[./]/g, "-");
+    const dateTimeMatch = normalizedText.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?$/);
+    if (dateTimeMatch) {
+      const [, year, month, day, hour = "0", minute = "0", second = "0"] = dateTimeMatch;
+      const parsedDate = new Date(
+        Number(year),
+        Number(month) - 1,
+        Number(day),
+        Number(hour),
+        Number(minute),
+        Number(second)
+      );
+      if (!Number.isNaN(parsedDate.getTime())) return parsedDate;
+    }
     const parsed = new Date(normalizedText);
     if (!Number.isNaN(parsed.getTime())) return parsed;
     return /* @__PURE__ */ new Date();
@@ -6864,9 +6898,10 @@ async function registerRoutes(httpServer2, app2) {
       const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
       const sheetName = workbook.SheetNames[0];
       const sheet = workbook.Sheets[sheetName];
-      const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+      const { rows, defaultDepositBank } = getDepositUploadRows(sheet);
       const depositsToCreate = rows.map((row) => {
         const rawDate = getDepositUploadValue(row, [
+          "\uAC70\uB798\uC77C\uC2DC",
           "\uC785\uAE08\uC77C\uC790",
           "\uC785\uAE08\uC77C",
           "\uB0A0\uC9DC",
@@ -6875,6 +6910,7 @@ async function registerRoutes(httpServer2, app2) {
           "depositDate"
         ]);
         const rawDepositorName = getDepositUploadValue(row, [
+          "\uBCF4\uB0B8\uBD84/\uBC1B\uB294\uBD84",
           "\uC785\uAE08\uC790\uBA85",
           "\uC785\uAE08\uC790",
           "\uC608\uAE08\uC8FC",
@@ -6884,6 +6920,8 @@ async function registerRoutes(httpServer2, app2) {
           "depositorName"
         ]);
         const rawDepositAmount = getDepositUploadValue(row, [
+          "\uC785\uAE08\uC561(\uC6D0)",
+          "\uC785\uAE08\uC561",
           "\uC785\uAE08\uAE08\uC561",
           "\uC785\uAE08\uC561",
           "\uAE08\uC561",
@@ -6906,7 +6944,7 @@ async function registerRoutes(httpServer2, app2) {
           depositDate: parseDepositUploadDate(rawDate),
           depositorName,
           depositAmount,
-          depositBank: String(rawDepositBank ?? "").trim() || "\uD558\uB098",
+          depositBank: String(rawDepositBank ?? "").trim() || defaultDepositBank || "\uD558\uB098",
           notes: String(rawNotes ?? "").trim() || null,
           confirmedAmount: 0,
           contractId: null,

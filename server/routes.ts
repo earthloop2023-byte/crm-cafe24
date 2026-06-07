@@ -6040,6 +6040,32 @@ export async function registerRoutes(
     return undefined;
   };
 
+  const getDepositUploadRows = (sheet: XLSX.WorkSheet) => {
+    const matrix = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "", raw: true }) as unknown[][];
+    const headerRowIndex = matrix.findIndex((row) => {
+      const keys = row.map((cell) => normalizeDepositUploadKey(cell));
+      return keys.includes(normalizeDepositUploadKey("거래일시")) &&
+        keys.includes(normalizeDepositUploadKey("보낸분/받는분")) &&
+        keys.includes(normalizeDepositUploadKey("입금액(원)"));
+    });
+
+    if (headerRowIndex >= 0) {
+      return {
+        rows: XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
+          defval: "",
+          raw: true,
+          range: headerRowIndex,
+        }),
+        defaultDepositBank: "국민은행",
+      };
+    }
+
+    return {
+      rows: XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "", raw: true }),
+      defaultDepositBank: undefined,
+    };
+  };
+
   const parseDepositUploadDate = (rawValue: unknown) => {
     if (typeof rawValue === "number") {
       const excelEpochUtc = Date.UTC(1899, 11, 30);
@@ -6056,6 +6082,20 @@ export async function registerRoutes(
     if (!rawText) return new Date();
 
     const normalizedText = rawText.replace(/[./]/g, "-");
+    const dateTimeMatch = normalizedText.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?$/);
+    if (dateTimeMatch) {
+      const [, year, month, day, hour = "0", minute = "0", second = "0"] = dateTimeMatch;
+      const parsedDate = new Date(
+        Number(year),
+        Number(month) - 1,
+        Number(day),
+        Number(hour),
+        Number(minute),
+        Number(second),
+      );
+      if (!Number.isNaN(parsedDate.getTime())) return parsedDate;
+    }
+
     const parsed = new Date(normalizedText);
     if (!Number.isNaN(parsed.getTime())) return parsed;
 
@@ -6070,11 +6110,12 @@ export async function registerRoutes(
       const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
       const sheetName = workbook.SheetNames[0];
       const sheet = workbook.Sheets[sheetName];
-      const rows: Record<string, unknown>[] = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+      const { rows, defaultDepositBank } = getDepositUploadRows(sheet);
 
       const depositsToCreate = rows
         .map((row) => {
           const rawDate = getDepositUploadValue(row, [
+            "거래일시",
             "입금일자",
             "입금일",
             "날짜",
@@ -6083,6 +6124,7 @@ export async function registerRoutes(
             "depositDate",
           ]);
           const rawDepositorName = getDepositUploadValue(row, [
+            "보낸분/받는분",
             "입금자명",
             "입금자",
             "예금주",
@@ -6092,6 +6134,8 @@ export async function registerRoutes(
             "depositorName",
           ]);
           const rawDepositAmount = getDepositUploadValue(row, [
+            "입금액(원)",
+            "입금액",
             "입금금액",
             "입금액",
             "금액",
@@ -6118,7 +6162,7 @@ export async function registerRoutes(
             depositDate: parseDepositUploadDate(rawDate),
             depositorName,
             depositAmount,
-            depositBank: String(rawDepositBank ?? "").trim() || "하나",
+            depositBank: String(rawDepositBank ?? "").trim() || defaultDepositBank || "하나",
             notes: String(rawNotes ?? "").trim() || null,
             confirmedAmount: 0,
             contractId: null,
