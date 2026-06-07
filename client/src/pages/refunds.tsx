@@ -17,6 +17,7 @@ import { formatCeilAmount } from "@/lib/utils";
 import { matchesKoreanSearch } from "@shared/korean-search";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { getContractGrossAmount } from "@/lib/contract-financials";
 
 type RefundReferenceRow = {
   id: string;
@@ -47,6 +48,11 @@ const formatAmount = (amount: number) => formatCeilAmount(Math.abs(Math.round(am
 function isRefundContract(contract: Contract) {
   return normalizeText((contract as Contract & { contractType?: string | null }).contractType) === CONTRACT_TYPE_REFUND ||
     toNumber(contract.cost) < 0;
+}
+
+function getRefundDisplayAmount(contract: Contract) {
+  const rawCost = Math.abs(toNumber(contract.cost));
+  return Math.round(getContractGrossAmount({ ...contract, cost: rawCost }));
 }
 
 function getStatusClassName(status: string) {
@@ -82,25 +88,28 @@ export default function RefundsPage() {
   });
 
   const rows = useMemo<RefundReferenceRow[]>(() => {
-    const contractRefundRows = allContracts.filter(isRefundContract).map((contract) => ({
-      id: `contract:${contract.id}`,
-      source: "계약관리" as const,
-      refundDate: contract.contractDate,
-      contractDate: contract.contractDate,
-      customerName: contract.customerName,
-      userIdentifier: contract.userIdentifier || null,
-      products: contract.products || null,
-      days: contract.days ?? null,
-      targetAmount: Math.abs(toNumber(contract.cost)),
-      managerName: contract.managerName || null,
-      quantity: Math.abs(toNumber(contract.quantity)),
-      refundDays: Math.abs(toNumber(contract.days)),
-      refundAmount: Math.abs(toNumber(contract.cost)),
-      refundStatus: "환불",
-      reason: contract.notes || "계약관리 환불 계약",
-      createdBy: "계약관리",
-      worker: contract.worker || null,
-    }));
+    const contractRefundRows = allContracts.filter(isRefundContract).map((contract) => {
+      const refundAmount = getRefundDisplayAmount(contract);
+      return {
+        id: `contract:${contract.id}`,
+        source: "계약관리" as const,
+        refundDate: contract.contractDate,
+        contractDate: contract.contractDate,
+        customerName: contract.customerName,
+        userIdentifier: contract.userIdentifier || null,
+        products: contract.products || null,
+        days: contract.days ?? null,
+        targetAmount: refundAmount,
+        managerName: contract.managerName || null,
+        quantity: Math.abs(toNumber(contract.quantity)),
+        refundDays: Math.abs(toNumber(contract.days)),
+        refundAmount,
+        refundStatus: "환불",
+        reason: contract.notes || "계약관리 환불 계약",
+        createdBy: "계약관리",
+        worker: contract.worker || null,
+      };
+    });
 
     return contractRefundRows.sort(
       (a, b) => new Date(b.refundDate).getTime() - new Date(a.refundDate).getTime(),
