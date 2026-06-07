@@ -471,9 +471,6 @@ export default function ContractsPage() {
       params.set("search", normalizedSearch);
     }
     if (managerFilter !== "all") params.set("manager", managerFilter);
-    if (customerFilter !== "all") params.set("customer", customerFilter);
-    if (productFilter !== "all") params.set("productCategory", productFilter);
-    if (paymentFilter !== "all") params.set("payment", paymentFilter);
     if (sortOption) params.set("sort", sortOption);
     return params.toString();
   }, [
@@ -484,9 +481,6 @@ export default function ContractsPage() {
     deferredSearchQuery,
     focusedContractNumber,
     managerFilter,
-    customerFilter,
-    productFilter,
-    paymentFilter,
     sortOption,
   ]);
 
@@ -657,7 +651,7 @@ export default function ContractsPage() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [deferredSearchQuery, managerFilter, customerFilter, productFilter, paymentFilter, sortOption, startDate, endDate]);
+  }, [deferredSearchQuery, managerFilter, sortOption, startDate, endDate]);
 
   const createMutation = useMutation({
     mutationFn: (data: InsertContract) => apiRequest("POST", "/api/contracts", data),
@@ -2589,76 +2583,16 @@ export default function ContractsPage() {
         data-testid="contracts-sticky-toolbar"
       >
       {/* Header */}
-      <div className="grid gap-3 2xl:grid-cols-[auto_minmax(720px,1fr)_auto] 2xl:items-center">
+      <div className="grid gap-3 lg:grid-cols-[auto_1fr] lg:items-center">
         <div className="flex min-w-0 items-center gap-2 sm:gap-3">
           <FileText className="h-5 w-5 shrink-0 text-primary sm:h-6 sm:w-6" />
           <h1 className="truncate text-lg font-bold leading-tight sm:text-xl" data-testid="text-page-title">계약관리목록</h1>
         </div>
-        <div className="grid min-w-0 gap-2 2xl:justify-self-stretch">
-          <span className="text-sm text-muted-foreground sm:whitespace-nowrap xl:whitespace-normal">
-            검색 결과 {totalFilteredContracts} 건
-          </span>
-          <div className="grid min-w-0 gap-2 lg:grid-cols-[minmax(260px,1.25fr)_repeat(3,minmax(140px,0.8fr))]">
-            <div className="relative min-w-0">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input
-                placeholder="계약번호, 고객명, 상품명, 아이디 검색"
-                value={searchQuery}
-                onChange={(e) => {
-                  setFocusedContractNumber("");
-                  setSearchQuery(e.target.value);
-                  setCurrentPage(1);
-                }}
-                className="h-10 w-full rounded-none pl-9 text-sm"
-                data-testid="input-search"
-              />
-            </div>
-            <Select value={customerFilter} onValueChange={setCustomerFilter}>
-              <SelectTrigger className="h-10 w-full rounded-none text-sm" data-testid="filter-customer">
-                <SelectValue placeholder="고객명" />
-              </SelectTrigger>
-              <SelectContent className="rounded-none">
-                <SelectItem value="all">고객명</SelectItem>
-                {customerFilterOptions.map((option) => (
-                  <SelectItem key={option} value={option}>
-                    {option}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={productFilter} onValueChange={setProductFilter}>
-              <SelectTrigger className="h-10 w-full rounded-none text-sm" data-testid="filter-product">
-                <SelectValue placeholder="상품구분" />
-              </SelectTrigger>
-              <SelectContent className="rounded-none">
-                <SelectItem value="all">상품구분</SelectItem>
-                {productFilterOptions.map((option) => (
-                  <SelectItem key={option} value={option}>
-                    {option}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={paymentFilter} onValueChange={setPaymentFilter}>
-              <SelectTrigger className="h-10 w-full rounded-none text-sm" data-testid="filter-payment">
-                <SelectValue placeholder="결제확인" />
-              </SelectTrigger>
-              <SelectContent className="rounded-none">
-                <SelectItem value="all">결제확인</SelectItem>
-                {CONTRACT_PAYMENT_METHOD_OPTIONS.map((option) => (
-                  <SelectItem key={option} value={option}>
-                    {option}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-        <div className="grid w-full grid-cols-2 items-center gap-2 sm:grid-cols-3 2xl:flex 2xl:w-auto 2xl:justify-end">
+        <div className="grid w-full grid-cols-2 items-center gap-2 sm:grid-cols-3 lg:flex lg:w-auto lg:justify-end">
           {canDeleteContracts && (
             <Button
               variant="outline"
-              className="h-10 w-full rounded-none px-2 text-xs sm:px-3 sm:text-sm 2xl:w-auto"
+              className="h-10 w-full rounded-none px-2 text-xs sm:px-3 sm:text-sm lg:w-auto"
               onClick={handleDeleteSelected}
               disabled={selectedContractIds.length === 0 || deleteMutation.isPending}
               data-testid="button-delete"
@@ -2669,7 +2603,7 @@ export default function ContractsPage() {
           )}
           <Button
             variant="outline"
-            className="h-10 w-full rounded-none px-2 text-xs sm:px-3 sm:text-sm 2xl:w-auto"
+            className="h-10 w-full rounded-none px-2 text-xs sm:px-3 sm:text-sm lg:w-auto"
             onClick={handleCopyToCreateDialog}
             disabled={selectedContractIds.length === 0}
             data-testid="button-copy"
@@ -2679,7 +2613,7 @@ export default function ContractsPage() {
           </Button>
           <Button
             variant="outline"
-            className="h-10 w-full rounded-none px-2 text-xs sm:px-3 sm:text-sm 2xl:w-auto"
+            className="h-10 w-full rounded-none px-2 text-xs sm:px-3 sm:text-sm lg:w-auto"
             onClick={handleRefundOpen}
             disabled={!singleSelectedRow || !isDepositConfirmedContract(singleSelectedRow.contract)}
             data-testid="button-refund"
@@ -2689,7 +2623,7 @@ export default function ContractsPage() {
           </Button>
           <Button
             variant="outline"
-            className="h-10 w-full rounded-none px-2 text-xs sm:px-3 sm:text-sm 2xl:w-auto"
+            className="h-10 w-full rounded-none px-2 text-xs sm:px-3 sm:text-sm lg:w-auto"
             onClick={handleWithdrawSelected}
             disabled={!singleSelectedRow || !isDepositPendingContract(singleSelectedRow.contract) || withdrawMutation.isPending}
             data-testid="button-withdraw-contract"
@@ -2698,7 +2632,7 @@ export default function ContractsPage() {
             계약 철회
           </Button>
           <Button
-            className="col-span-2 h-10 w-full rounded-none bg-primary px-4 hover:bg-primary/90 sm:col-span-1 2xl:w-auto"
+            className="col-span-2 h-10 w-full rounded-none bg-primary px-4 hover:bg-primary/90 sm:col-span-1 lg:w-auto"
             onClick={handleOpenCreateDialog}
             data-testid="button-create"
           >
@@ -3637,14 +3571,14 @@ export default function ContractsPage() {
       </div>
 
       {/* Filter Bar */}
-      <div className="grid grid-cols-2 gap-2 md:grid-cols-[minmax(260px,1fr)_minmax(140px,220px)_40px] md:items-center">
+      <div className="grid grid-cols-2 gap-2 lg:grid-cols-[minmax(260px,1fr)_minmax(120px,0.5fr)_minmax(120px,0.65fr)_minmax(360px,1.35fr)_40px] lg:items-center">
         <DatePeriodFilter
           startDate={startDate}
           endDate={endDate}
           onStartDateChange={setStartDate}
           onEndDateChange={setEndDate}
-          buttonClassName="col-span-2 h-10 w-full justify-start gap-2 rounded-none text-sm md:col-span-1 md:h-9"
-          selectClassName="h-10 w-full rounded-none text-sm md:h-9"
+          buttonClassName="col-span-2 h-10 w-full justify-start gap-2 rounded-none text-sm lg:col-span-1 lg:h-9"
+          selectClassName="h-10 w-full rounded-none text-sm lg:h-9"
           buttonTestId="button-date-filter"
           onReset={() => {
             setStartDate(getKoreanStartOfYear());
@@ -3657,7 +3591,7 @@ export default function ContractsPage() {
           }}
         />
         <Select value={managerFilter} onValueChange={setManagerFilter}>
-          <SelectTrigger className="h-10 w-full rounded-none text-sm md:h-9" data-testid="filter-manager">
+          <SelectTrigger className="h-10 w-full rounded-none text-sm lg:h-9" data-testid="filter-manager">
             <SelectValue placeholder="담당자" />
           </SelectTrigger>
           <SelectContent className="rounded-none">
@@ -3670,10 +3604,30 @@ export default function ContractsPage() {
           </SelectContent>
         </Select>
 
+        <div className="col-span-2 grid min-w-0 gap-2 sm:grid-cols-[auto_minmax(260px,1fr)] sm:items-center lg:col-span-1">
+          <span className="text-sm text-muted-foreground sm:whitespace-nowrap">
+            검색 결과 {totalFilteredContracts} 건
+          </span>
+          <div className="relative min-w-0">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Input
+              placeholder="계약번호, 고객명, 상품명, 아이디 검색"
+              value={searchQuery}
+              onChange={(e) => {
+                setFocusedContractNumber("");
+                setSearchQuery(e.target.value);
+                setCurrentPage(1);
+              }}
+              className="h-10 w-full rounded-none pl-9 text-sm lg:h-9"
+              data-testid="input-search"
+            />
+          </div>
+        </div>
+
         <Button
           variant="ghost"
           size="icon"
-          className="h-10 w-10 rounded-none text-muted-foreground md:h-9 md:w-9"
+          className="h-10 w-10 rounded-none text-muted-foreground lg:h-9 lg:w-9"
           onClick={() => {
             setManagerFilter("all");
             setCustomerFilter("all");
