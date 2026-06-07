@@ -3126,9 +3126,9 @@ export default function ContractsPage() {
                       : ""}
                   </div>
                 )}
-                <div className="flex min-h-0 flex-col gap-2">
+                <div className="flex shrink-0 flex-col gap-2">
                   <Label className="text-sm font-medium">상품 정보</Label>
-                  <div className="grid gap-2 lg:hidden">
+                  <div className="hidden">
                     {productItems.map((item, index) => (
                       <div key={item.id} className="space-y-2 rounded-none border bg-white p-2">
                         <div className="grid gap-2">
@@ -3278,9 +3278,12 @@ export default function ContractsPage() {
                       {renderContractTotalsSummary()}
                     </div>
                   </div>
-                <div className="hidden overflow-x-auto rounded-none border bg-white lg:block">
+                <div
+                  className="block min-h-[76px] w-full max-w-full overflow-x-auto overflow-y-auto overscroll-x-contain rounded-none border bg-white [-webkit-overflow-scrolling:touch] max-h-[220px] lg:max-h-none lg:overflow-y-visible"
+                  data-testid="edit-product-table-scroll"
+                >
                     <div className={productRowsViewportClassName}>
-                    <table className="w-full min-w-[980px] table-fixed lg:min-w-[1300px]">
+                    <table className="w-full min-w-[1180px] table-fixed lg:min-w-[1300px]">
                       <thead className="sticky top-0 z-10 bg-muted/30">
                         <tr>
                           <th className="px-1 py-1 text-left text-xs font-medium w-[165px]">상품명</th>
@@ -3437,7 +3440,8 @@ export default function ContractsPage() {
                       </tbody>
                     </table>
                     </div>
-                    <div className="border-t px-2 py-1.5">
+                  </div>
+                    <div className="rounded-none border bg-white px-2 py-1.5">
                       <Button
                         variant="ghost"
                         size="sm"
@@ -3451,10 +3455,9 @@ export default function ContractsPage() {
                       </Button>
                     </div>
 
-                    <div className="border-t px-2 py-1.5">
+                    <div className="rounded-none border bg-white px-2 py-1.5">
                       {renderContractTotalsSummary()}
                     </div>
-                  </div>
                 </div>
 
                 <div className="w-full space-y-2">
