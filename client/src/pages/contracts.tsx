@@ -40,7 +40,7 @@ import type { Contract, Deposit, InsertContract, User, Customer, Product, Produc
 import { Textarea } from "@/components/ui/textarea";
 import { getKoreanNow, getKoreanStartOfMonth, getKoreanStartOfYear, getKoreanEndOfDay, getKoreanDateKey } from "@/lib/korean-time";
 import { useSettings } from "@/lib/settings";
-import { formatCeilAmount } from "@/lib/utils";
+import { cn, formatCeilAmount } from "@/lib/utils";
 import { matchesKoreanSearch } from "@shared/korean-search";
 
 const DEFAULT_CREATE_PAYMENT_METHOD = "입금예정";
@@ -2473,7 +2473,7 @@ export default function ContractsPage() {
   const shouldScrollProductItems = productItems.length > 5;
   const productRowsViewportClassName = shouldScrollProductItems ? "max-h-[292px] overflow-y-auto" : "";
   const contractDialogClassName = "top-3 flex h-[calc(100svh-24px)] w-[calc(100vw-24px)] max-w-[1700px] max-h-[calc(100svh-24px)] translate-y-0 flex-col gap-3 overflow-hidden rounded-none p-3 sm:top-[70px] sm:h-auto sm:w-[95vw] sm:max-h-[calc(100dvh-140px)] sm:p-4";
-  const contractDialogBodyClassName = "flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain pr-1";
+  const contractDialogBodyClassName = "flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-y-auto overflow-x-hidden overscroll-contain pr-1";
   const contractDialogFooterClassName = "sticky bottom-0 z-10 flex w-full shrink-0 justify-end gap-2 border-t bg-background pt-3 pb-[calc(0.25rem+env(safe-area-inset-bottom))]";
 
   const getItemMarginRate = (item: ProductItem) => {
@@ -2567,6 +2567,9 @@ export default function ContractsPage() {
   const contractsTableViewportMaxHeight = stickyToolbarHeight > 0
     ? `calc(100vh - ${stickyToolbarHeight + 96}px)`
     : "calc(100vh - 320px)";
+  const mobileOptionalColumnClass = "hidden lg:table-cell";
+  const desktopOnlyColumnClass = "hidden xl:table-cell";
+  const profitColumnClass = "hidden 2xl:table-cell";
 
   const productNameOptions = useMemo(() => {
     return Array.from(
@@ -2586,16 +2589,16 @@ export default function ContractsPage() {
         data-testid="contracts-sticky-toolbar"
       >
       {/* Header */}
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+      <div className="grid gap-3 xl:grid-cols-[auto_minmax(280px,420px)_auto] xl:items-center">
         <div className="flex min-w-0 items-center gap-2 sm:gap-3">
           <FileText className="h-5 w-5 shrink-0 text-primary sm:h-6 sm:w-6" />
           <h1 className="truncate text-lg font-bold leading-tight sm:text-xl" data-testid="text-page-title">계약관리목록</h1>
         </div>
-        <div className="grid w-full grid-cols-[1fr_auto_auto_auto] items-center gap-2 lg:flex lg:w-auto lg:gap-3">
-          <span className="col-span-4 text-sm text-muted-foreground lg:col-auto">
+        <div className="grid min-w-0 gap-2 sm:grid-cols-[auto_1fr] sm:items-center xl:grid-cols-1 xl:justify-self-stretch">
+          <span className="text-sm text-muted-foreground sm:whitespace-nowrap xl:whitespace-normal">
             검색 결과 {totalFilteredContracts} 건
           </span>
-          <div className="relative col-span-3 min-w-0 sm:col-span-2 lg:col-auto">
+          <div className="relative min-w-0">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
               placeholder="계약번호, 고객명, 상품명, 아이디 검색"
@@ -2605,25 +2608,27 @@ export default function ContractsPage() {
                 setSearchQuery(e.target.value);
                 setCurrentPage(1);
               }}
-              className="h-10 w-full rounded-none pl-9 text-sm lg:w-64"
+              className="h-10 w-full rounded-none pl-9 text-sm"
               data-testid="input-search"
             />
           </div>
+        </div>
+        <div className="grid w-full grid-cols-2 items-center gap-2 sm:grid-cols-3 xl:flex xl:w-auto xl:justify-end">
           {canDeleteContracts && (
             <Button
               variant="outline"
-              className="hidden h-10 rounded-none px-3 sm:inline-flex"
+              className="h-10 w-full rounded-none px-2 text-xs sm:px-3 sm:text-sm xl:w-auto"
               onClick={handleDeleteSelected}
               disabled={selectedContractIds.length === 0 || deleteMutation.isPending}
               data-testid="button-delete"
             >
-              <Trash2 className="h-4 w-4 lg:mr-1" />
-              <span className="hidden lg:inline">삭제</span>
+              <Trash2 className="h-4 w-4 mr-1" />
+              삭제
             </Button>
           )}
           <Button
             variant="outline"
-            className="rounded-none"
+            className="h-10 w-full rounded-none px-2 text-xs sm:px-3 sm:text-sm xl:w-auto"
             onClick={handleCopyToCreateDialog}
             disabled={selectedContractIds.length === 0}
             data-testid="button-copy"
@@ -2633,7 +2638,7 @@ export default function ContractsPage() {
           </Button>
           <Button
             variant="outline"
-            className="hidden h-10 rounded-none px-3 sm:inline-flex"
+            className="h-10 w-full rounded-none px-2 text-xs sm:px-3 sm:text-sm xl:w-auto"
             onClick={handleRefundOpen}
             disabled={!singleSelectedRow || !isDepositConfirmedContract(singleSelectedRow.contract)}
             data-testid="button-refund"
@@ -2643,7 +2648,7 @@ export default function ContractsPage() {
           </Button>
           <Button
             variant="outline"
-            className="hidden h-10 rounded-none px-3 sm:inline-flex"
+            className="h-10 w-full rounded-none px-2 text-xs sm:px-3 sm:text-sm xl:w-auto"
             onClick={handleWithdrawSelected}
             disabled={!singleSelectedRow || !isDepositPendingContract(singleSelectedRow.contract) || withdrawMutation.isPending}
             data-testid="button-withdraw-contract"
@@ -2652,7 +2657,7 @@ export default function ContractsPage() {
             계약 철회
           </Button>
           <Button
-            className="h-10 rounded-none bg-primary px-4 hover:bg-primary/90"
+            className="col-span-2 h-10 w-full rounded-none bg-primary px-4 hover:bg-primary/90 sm:col-span-1 xl:w-auto"
             onClick={handleOpenCreateDialog}
             data-testid="button-create"
           >
@@ -2769,7 +2774,7 @@ export default function ContractsPage() {
                   <Label className="text-sm font-medium">상품 정보</Label>
                   <div className="overflow-x-auto rounded-none border bg-white">
                     <div className={productRowsViewportClassName}>
-                    <Table className="table-fixed w-full min-w-[1300px]">
+                    <Table className="table-fixed w-full min-w-[980px] lg:min-w-[1300px]">
                       <TableHeader className="sticky top-0 z-10 bg-white">
                         <TableRow className="bg-muted/30">
                           <TableHead className="w-6 px-1"></TableHead>
@@ -3150,7 +3155,7 @@ export default function ContractsPage() {
                   <Label className="text-sm font-medium">상품 정보</Label>
                 <div className="overflow-x-auto rounded-none border bg-white">
                     <div className={productRowsViewportClassName}>
-                    <table className="w-full min-w-[1300px] table-fixed">
+                    <table className="w-full min-w-[980px] table-fixed lg:min-w-[1300px]">
                       <thead className="sticky top-0 z-10 bg-muted/30">
                         <tr>
                           <th className="px-1 py-1 text-left text-xs font-medium w-[165px]">상품명</th>
@@ -3441,14 +3446,14 @@ export default function ContractsPage() {
       </div>
 
       {/* Filter Bar */}
-      <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
+      <div className="grid grid-cols-2 gap-2 lg:grid-cols-[minmax(260px,1.5fr)_minmax(120px,0.7fr)_repeat(4,minmax(120px,1fr))_40px] lg:items-center">
         <DatePeriodFilter
           startDate={startDate}
           endDate={endDate}
           onStartDateChange={setStartDate}
           onEndDateChange={setEndDate}
-          buttonClassName="col-span-2 h-10 justify-start gap-2 rounded-none sm:col-auto sm:h-8"
-          selectClassName="h-10 w-full rounded-none text-sm sm:h-8 sm:w-auto sm:min-w-[100px]"
+          buttonClassName="col-span-2 h-10 w-full justify-start gap-2 rounded-none text-sm lg:col-span-1 lg:h-9"
+          selectClassName="h-10 w-full rounded-none text-sm lg:h-9"
           buttonTestId="button-date-filter"
           onReset={() => {
             setStartDate(getKoreanStartOfYear());
@@ -3461,7 +3466,7 @@ export default function ContractsPage() {
           }}
         />
         <Select value={managerFilter} onValueChange={setManagerFilter}>
-          <SelectTrigger className="h-10 w-full rounded-none text-sm sm:h-8 sm:w-auto sm:min-w-[100px]" data-testid="filter-manager">
+          <SelectTrigger className="h-10 w-full rounded-none text-sm lg:h-9" data-testid="filter-manager">
             <SelectValue placeholder="담당자" />
           </SelectTrigger>
           <SelectContent className="rounded-none">
@@ -3475,7 +3480,7 @@ export default function ContractsPage() {
         </Select>
 
         <Select value={customerFilter} onValueChange={setCustomerFilter}>
-          <SelectTrigger className="h-10 w-full rounded-none text-sm sm:h-8 sm:w-auto sm:min-w-[100px]" data-testid="filter-customer">
+          <SelectTrigger className="h-10 w-full rounded-none text-sm lg:h-9" data-testid="filter-customer">
             <SelectValue placeholder="고객명" />
           </SelectTrigger>
           <SelectContent className="rounded-none">
@@ -3489,7 +3494,7 @@ export default function ContractsPage() {
         </Select>
 
         <Select value={productFilter} onValueChange={setProductFilter}>
-          <SelectTrigger className="h-10 w-full rounded-none text-sm sm:h-8 sm:w-auto sm:min-w-[100px]" data-testid="filter-product">
+          <SelectTrigger className="h-10 w-full rounded-none text-sm lg:h-9" data-testid="filter-product">
             <SelectValue placeholder="상품구분" />
           </SelectTrigger>
           <SelectContent className="rounded-none">
@@ -3503,7 +3508,7 @@ export default function ContractsPage() {
         </Select>
 
         <Select value={paymentFilter} onValueChange={setPaymentFilter}>
-          <SelectTrigger className="h-10 w-full rounded-none text-sm sm:h-8 sm:w-auto sm:min-w-[100px]" data-testid="filter-payment">
+          <SelectTrigger className="h-10 w-full rounded-none text-sm lg:h-9" data-testid="filter-payment">
             <SelectValue placeholder="결제확인" />
           </SelectTrigger>
           <SelectContent className="rounded-none">
@@ -3519,7 +3524,7 @@ export default function ContractsPage() {
         <Button
           variant="ghost"
           size="icon"
-          className="h-10 w-10 rounded-none text-muted-foreground sm:h-8 sm:w-8"
+          className="h-10 w-10 rounded-none text-muted-foreground lg:h-9 lg:w-9"
           onClick={() => {
             setManagerFilter("all");
             setCustomerFilter("all");
@@ -3538,7 +3543,7 @@ export default function ContractsPage() {
         </Button>
       </div>
 
-      <div className="flex flex-wrap items-center justify-end gap-3 rounded-none border bg-muted/20 px-3 py-2">
+      <div className="flex flex-wrap items-center justify-start gap-3 rounded-none border bg-muted/20 px-3 py-2 lg:justify-end">
         {selectedSummary.rowCount > 0 ? (
           <div className="flex flex-wrap items-center gap-4 text-sm">
             <span className="font-medium">
@@ -3578,6 +3583,7 @@ export default function ContractsPage() {
       <Card className="overflow-hidden rounded-none border">
         <CardContent className="p-0">
           <Table
+            className="min-w-full table-fixed lg:min-w-[980px] xl:min-w-[1180px] 2xl:min-w-[1380px]"
             wrapperClassName="overflow-auto"
             wrapperStyle={{ maxHeight: contractsTableViewportMaxHeight }}
           >
@@ -3586,9 +3592,9 @@ export default function ContractsPage() {
               data-testid="contracts-sticky-table-header"
             >
               <TableRow className="bg-muted/30">
-                <TableHead className="w-12 p-0">
+                <TableHead className="w-8 p-0 lg:w-12">
                   <div
-                    className="flex h-12 w-12 cursor-pointer items-center justify-center"
+                    className="flex h-12 w-8 cursor-pointer items-center justify-center lg:w-12"
                     onClick={(event) => handleCheckboxAreaClick(event, () => toggleSelectAll())}
                     onPointerDown={stopSelectionEventPropagation}
                     title="보이는 항목 전체 선택"
@@ -3602,7 +3608,7 @@ export default function ContractsPage() {
                     />
                   </div>
                 </TableHead>
-                <TableHead className="text-xs font-medium whitespace-nowrap">
+                <TableHead className="w-[82px] px-1.5 text-[11px] font-medium whitespace-nowrap lg:w-auto lg:px-4 lg:text-xs">
                   <div className="flex items-center gap-1">
                     <span>계약일</span>
                     <DropdownMenu>
@@ -3626,8 +3632,11 @@ export default function ContractsPage() {
                     </DropdownMenu>
                   </div>
                 </TableHead>
-                <TableHead className="text-xs font-medium whitespace-nowrap">계약연장 예정일</TableHead>
-                <TableHead className="text-xs font-medium whitespace-nowrap">
+                <TableHead className="w-[92px] px-1.5 text-[11px] font-medium whitespace-nowrap lg:w-auto lg:px-4 lg:text-xs">
+                  <span className="lg:hidden">연장예정</span>
+                  <span className="hidden lg:inline">계약연장 예정일</span>
+                </TableHead>
+                <TableHead className="w-[120px] px-1.5 text-[11px] font-medium whitespace-nowrap lg:w-auto lg:px-4 lg:text-xs">
                   <div className="flex items-center gap-1">
                     <span>고객명</span>
                     <DropdownMenu>
@@ -3648,23 +3657,23 @@ export default function ContractsPage() {
                     </DropdownMenu>
                   </div>
                 </TableHead>
-                <TableHead className="text-xs font-medium whitespace-nowrap">사용자ID</TableHead>
-                <TableHead className="text-xs font-medium whitespace-nowrap">상품</TableHead>
-                <TableHead className="text-xs font-medium text-center whitespace-nowrap">일수</TableHead>
-                <TableHead className="text-xs font-medium text-center whitespace-nowrap">수량</TableHead>
-                <TableHead className="text-xs font-medium text-right whitespace-nowrap">공급가액</TableHead>
-                <TableHead className="text-xs font-medium whitespace-nowrap">담당자</TableHead>
-                <TableHead className="text-xs font-medium text-center whitespace-nowrap">결제확인</TableHead>
-                <TableHead className="text-xs font-medium text-center whitespace-nowrap">입금통장</TableHead>
-                <TableHead className="text-xs font-medium text-center whitespace-nowrap">부가세</TableHead>
+                <TableHead className={cn("text-xs font-medium whitespace-nowrap", mobileOptionalColumnClass)}>사용자ID</TableHead>
+                <TableHead className={cn("text-xs font-medium whitespace-nowrap", mobileOptionalColumnClass)}>상품</TableHead>
+                <TableHead className={cn("text-xs font-medium text-center whitespace-nowrap", desktopOnlyColumnClass)}>일수</TableHead>
+                <TableHead className={cn("text-xs font-medium text-center whitespace-nowrap", desktopOnlyColumnClass)}>수량</TableHead>
+                <TableHead className={cn("text-xs font-medium text-right whitespace-nowrap", mobileOptionalColumnClass)}>공급가액</TableHead>
+                <TableHead className={cn("text-xs font-medium whitespace-nowrap", desktopOnlyColumnClass)}>담당자</TableHead>
+                <TableHead className={cn("text-xs font-medium text-center whitespace-nowrap", mobileOptionalColumnClass)}>결제확인</TableHead>
+                <TableHead className={cn("text-xs font-medium text-center whitespace-nowrap", desktopOnlyColumnClass)}>입금통장</TableHead>
+                <TableHead className={cn("text-xs font-medium text-center whitespace-nowrap", desktopOnlyColumnClass)}>부가세</TableHead>
                 {showProfitColumns && (
                   <>
-                    <TableHead className="text-xs font-medium text-right whitespace-nowrap">작업비</TableHead>
-                    <TableHead className="text-xs font-medium text-right whitespace-nowrap">마진</TableHead>
-                    <TableHead className="text-xs font-medium text-right whitespace-nowrap">마진율</TableHead>
+                    <TableHead className={cn("text-xs font-medium text-right whitespace-nowrap", profitColumnClass)}>작업비</TableHead>
+                    <TableHead className={cn("text-xs font-medium text-right whitespace-nowrap", profitColumnClass)}>마진</TableHead>
+                    <TableHead className={cn("text-xs font-medium text-right whitespace-nowrap", profitColumnClass)}>마진율</TableHead>
                   </>
                 )}
-                <TableHead className="text-xs font-medium whitespace-nowrap">작업자</TableHead>
+                <TableHead className={cn("text-xs font-medium whitespace-nowrap", desktopOnlyColumnClass)}>작업자</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -3688,9 +3697,9 @@ export default function ContractsPage() {
                     data-testid={itemIndex === 0 ? `row-contract-${contract.id}` : `row-contract-${contract.id}-${itemIndex}`}
                     onClick={() => openContractDialog(contract, "edit")}
                   >
-                    <TableCell className="w-12 p-0 align-top">
+                    <TableCell className="w-8 p-0 align-top lg:w-12">
                       <div
-                        className="flex min-h-12 w-12 cursor-pointer items-center justify-center py-3"
+                        className="flex min-h-12 w-8 cursor-pointer items-center justify-center py-3 lg:w-12"
                         onClick={(event) => handleCheckboxAreaClick(event, () => toggleSelectItem(rowKey))}
                         onPointerDown={stopSelectionEventPropagation}
                         title="항목 선택"
@@ -3704,10 +3713,10 @@ export default function ContractsPage() {
                         />
                       </div>
                     </TableCell>
-                    <TableCell className="text-xs whitespace-nowrap align-top">
+                    <TableCell className="px-1.5 text-[11px] whitespace-nowrap align-top lg:px-4 lg:text-xs">
                       {formatDate(contract.contractDate)}
                     </TableCell>
-                    <TableCell className="text-xs whitespace-nowrap align-top">
+                    <TableCell className="px-1.5 text-[11px] whitespace-nowrap align-top lg:px-4 lg:text-xs">
                       <span className="inline-flex items-center gap-1">
                         {(contract as Contract & { renewalDueDate?: string | Date | null }).renewalDueDate
                           ? formatDate((contract as Contract & { renewalDueDate?: string | Date | null }).renewalDueDate as any)
@@ -3722,9 +3731,9 @@ export default function ContractsPage() {
                           )}
                       </span>
                     </TableCell>
-                    <TableCell className="text-xs text-primary whitespace-nowrap align-top">
+                    <TableCell className="px-1.5 text-[11px] text-primary align-top lg:px-4 lg:text-xs">
                       <span className="inline-flex items-center gap-1.5">
-                        <span>{contract.customerName}</span>
+                        <span className="line-clamp-2 break-keep">{contract.customerName}</span>
                         {isWithdrawnContract(contract) && (
                           <Badge variant="outline" className="rounded-none border-amber-300 bg-amber-100 px-1.5 py-0 text-[10px] text-amber-800">
                             철회
@@ -3732,18 +3741,18 @@ export default function ContractsPage() {
                         )}
                       </span>
                     </TableCell>
-                    <TableCell className="text-xs whitespace-nowrap">{item.userIdentifier || "-"}</TableCell>
-                    <TableCell className="text-xs max-w-[190px] break-all">{item.productName || "-"}</TableCell>
-                    <TableCell className="text-xs text-center whitespace-nowrap">{getEffectiveDays(item)}</TableCell>
-                    <TableCell className="text-xs text-center whitespace-nowrap">{getItemQuantity(item)}</TableCell>
-                    <TableCell className="text-xs text-right whitespace-nowrap">
+                    <TableCell className={cn("text-xs whitespace-nowrap", mobileOptionalColumnClass)}>{item.userIdentifier || "-"}</TableCell>
+                    <TableCell className={cn("text-xs max-w-[190px] break-all", mobileOptionalColumnClass)}>{item.productName || "-"}</TableCell>
+                    <TableCell className={cn("text-xs text-center whitespace-nowrap", desktopOnlyColumnClass)}>{getEffectiveDays(item)}</TableCell>
+                    <TableCell className={cn("text-xs text-center whitespace-nowrap", desktopOnlyColumnClass)}>{getItemQuantity(item)}</TableCell>
+                    <TableCell className={cn("text-xs text-right whitespace-nowrap", mobileOptionalColumnClass)}>
                       <span>{formatCurrency(getItemOriginalAmount(item))}</span>
                     </TableCell>
-                    <TableCell className="text-xs whitespace-nowrap align-top">
+                    <TableCell className={cn("text-xs whitespace-nowrap align-top", desktopOnlyColumnClass)}>
                       {contract.managerName}
                     </TableCell>
                     <TableCell
-                      className={`text-center text-xs whitespace-nowrap align-top ${getPaymentMethodTextClassName(contract.paymentMethod)}`}
+                      className={cn("text-center text-xs whitespace-nowrap align-top", mobileOptionalColumnClass, getPaymentMethodTextClassName(contract.paymentMethod))}
                       data-testid={`text-payment-method-${contract.id}-${itemIndex}`}
                     >
                       {(() => {
@@ -3765,26 +3774,26 @@ export default function ContractsPage() {
                         );
                       })()}
                     </TableCell>
-                    <TableCell className="text-center text-xs whitespace-nowrap align-top">
+                    <TableCell className={cn("text-center text-xs whitespace-nowrap align-top", desktopOnlyColumnClass)}>
                       {getDepositBankDisplayLabel(contract)}
                     </TableCell>
-                    <TableCell className="text-center text-xs whitespace-nowrap align-top">
+                    <TableCell className={cn("text-center text-xs whitespace-nowrap align-top", desktopOnlyColumnClass)}>
                       {getVatDisplayText(contract, item)}
                     </TableCell>
                     {showProfitColumns && (
                       <>
-                        <TableCell className="text-xs text-right whitespace-nowrap align-top">
+                        <TableCell className={cn("text-xs text-right whitespace-nowrap align-top", profitColumnClass)}>
                           {calculateWorkCost(item) ? formatCurrency(calculateWorkCost(item)) : "-"}
                         </TableCell>
-                        <TableCell className="text-xs text-right whitespace-nowrap align-top">
+                        <TableCell className={cn("text-xs text-right whitespace-nowrap align-top", profitColumnClass)}>
                           {formatCurrency(getItemMargin(item))}
                         </TableCell>
-                        <TableCell className="text-xs text-right whitespace-nowrap align-top">
+                        <TableCell className={cn("text-xs text-right whitespace-nowrap align-top", profitColumnClass)}>
                           {formatPercent(getItemMarginRate(item))}
                         </TableCell>
                       </>
                     )}
-                    <TableCell className="text-xs whitespace-nowrap">{item.worker || "-"}</TableCell>
+                    <TableCell className={cn("text-xs whitespace-nowrap", desktopOnlyColumnClass)}>{item.worker || "-"}</TableCell>
                   </TableRow>
                 ))
               )}

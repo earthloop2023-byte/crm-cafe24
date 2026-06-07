@@ -33,6 +33,10 @@ type MatchProductItem = {
   quantity?: number;
 };
 
+type DepositWithRefundMatches = Deposit & {
+  refundIds?: string[];
+};
+
 const DEFAULT_DEPOSIT_BANK = "국민은행";
 const DEPOSIT_BANK_OPTIONS = ["국민은행", "카드결제", "크몽", "기타"] as const;
 const DEPOSIT_BANK_OPTION_SET = new Set<string>(DEPOSIT_BANK_OPTIONS);
@@ -75,7 +79,7 @@ export default function DepositConfirmationsPage() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
   const [isRematchMode, setIsRematchMode] = useState(false);
-  const [selectedDeposit, setSelectedDeposit] = useState<Deposit | null>(null);
+  const [selectedDeposit, setSelectedDeposit] = useState<DepositWithRefundMatches | null>(null);
   const [contractSearch, setContractSearch] = useState("");
   const [contractSortMode, setContractSortMode] = useState<"amount" | "latest">("amount");
   const [selectedContractIds, setSelectedContractIds] = useState<string[]>([]);
@@ -93,7 +97,7 @@ export default function DepositConfirmationsPage() {
   const [notesViewOpen, setNotesViewOpen] = useState(false);
   const [viewingNotes, setViewingNotes] = useState("");
   const [editDialogOpen, setEditDialogOpen] = useState(false);
-  const [editingDeposit, setEditingDeposit] = useState<Deposit | null>(null);
+  const [editingDeposit, setEditingDeposit] = useState<DepositWithRefundMatches | null>(null);
   const [editDepositDate, setEditDepositDate] = useState("");
   const [editDepositorName, setEditDepositorName] = useState("");
   const [editDepositAmount, setEditDepositAmount] = useState("");
@@ -101,7 +105,7 @@ export default function DepositConfirmationsPage() {
   const [editNotes, setEditNotes] = useState("");
   const [hiddenDepositIds, setHiddenDepositIds] = useState<Set<string>>(new Set());
 
-  const { data: depositsData = [], isLoading } = useQuery<Deposit[]>({
+  const { data: depositsData = [], isLoading } = useQuery<DepositWithRefundMatches[]>({
     queryKey: ["/api/deposits"],
   });
 
@@ -234,7 +238,7 @@ export default function DepositConfirmationsPage() {
           deletedIds.forEach((id) => next.add(id));
           return next;
         });
-        queryClient.setQueryData<Deposit[]>(["/api/deposits"], (previous = []) =>
+        queryClient.setQueryData<DepositWithRefundMatches[]>(["/api/deposits"], (previous = []) =>
           previous.filter((deposit) => !deletedIds.includes(deposit.id)),
         );
       }
@@ -269,7 +273,7 @@ export default function DepositConfirmationsPage() {
         next.delete(id);
         return next;
       });
-      queryClient.setQueryData<Deposit[]>(["/api/deposits"], (previous = []) =>
+      queryClient.setQueryData<DepositWithRefundMatches[]>(["/api/deposits"], (previous = []) =>
         previous.filter((deposit) => deposit.id !== id),
       );
       await queryClient.invalidateQueries({ queryKey: ["/api/deposits"] });
@@ -540,7 +544,7 @@ export default function DepositConfirmationsPage() {
     }
   };
 
-  const handleConfirmClick = (deposit: Deposit) => {
+  const handleConfirmClick = (deposit: DepositWithRefundMatches) => {
     setIsRematchMode(false);
     setSelectedDeposit(deposit);
     setContractSearch("");
@@ -558,7 +562,7 @@ export default function DepositConfirmationsPage() {
     return format(parsed, "yyyy-MM-dd");
   };
 
-  const openEditDialog = (deposit: Deposit) => {
+  const openEditDialog = (deposit: DepositWithRefundMatches) => {
     if (!hasDepositActionAccess) {
       showDepositActionDeniedMessage();
       return;
@@ -592,13 +596,13 @@ export default function DepositConfirmationsPage() {
     });
   };
 
-  const handleRematchClick = (deposit: Deposit) => {
+  const handleRematchClick = (deposit: DepositWithRefundMatches) => {
     setIsRematchMode(true);
     setSelectedDeposit(deposit);
     setContractSearch("");
     setContractSortMode("amount");
     setSelectedContractIds(deposit.contractId ? [deposit.contractId] : []);
-    setSelectedRefundIds([]);
+    setSelectedRefundIds(Array.isArray(deposit.refundIds) ? deposit.refundIds : []);
     setDialogPage(1);
     setConfirmDialogOpen(true);
   };
@@ -624,7 +628,10 @@ export default function DepositConfirmationsPage() {
   }, [allContractsData, selectedContractIds]);
 
   const filteredPendingRefunds = useMemo(() => {
-    let filtered = refundsData.filter((refund) => refund.refundStatus === "환불대기");
+    const selectedRefundIdSet = new Set(selectedRefundIds);
+    let filtered = refundsData.filter(
+      (refund) => refund.refundStatus === "환불대기" || selectedRefundIdSet.has(refund.id),
+    );
 
     if (contractSearch) {
       filtered = filtered.filter((refund) =>
@@ -641,7 +648,7 @@ export default function DepositConfirmationsPage() {
       if (aTime !== bTime) return bTime - aTime;
       return String(a.customerName || "").localeCompare(String(b.customerName || ""), "ko");
     });
-  }, [refundsData, contractSearch]);
+  }, [refundsData, selectedRefundIds, contractSearch]);
 
   const getRefundGrossAmount = (refund: RefundWithContract) =>
     getFinancialAmountWithVat(contractById.get(String(refund.contractId || "")), refund);

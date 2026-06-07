@@ -6123,7 +6123,13 @@ export async function registerRoutes(
         Expires: "0",
       });
       const allDeposits = await storage.getDeposits();
-      res.json(allDeposits);
+      const depositsWithRefundMatches = await Promise.all(
+        allDeposits.map(async (deposit) => {
+          const refundIds = await getDepositRefundMatchIds(deposit.id);
+          return { ...deposit, refundIds };
+        }),
+      );
+      res.json(depositsWithRefundMatches);
     } catch (error) {
       console.error("Error fetching deposits:", error);
       res.status(500).json({ error: "Failed to fetch deposits" });
@@ -6395,11 +6401,6 @@ export async function registerRoutes(
         ? Array.from(new Set(refundIds.map((id: unknown) => String(id || "").trim()).filter(Boolean)))
         : [];
 
-      const previousMatchedRefundIds = await getDepositRefundMatchIds(depositId);
-      if (previousMatchedRefundIds.length > 0) {
-        await storage.updateRefundStatuses(previousMatchedRefundIds, REFUND_STATUS_PENDING);
-      }
-
       let totalContractCost = 0;
       for (const contractId of normalizedContractIds) {
         const contract = await storage.getContract(contractId);
@@ -6410,9 +6411,7 @@ export async function registerRoutes(
       const selectedRefundRows = (
         await Promise.all(normalizedRefundIds.map((refundId) => storage.getRefund(refundId)))
       ).filter((refund): refund is NonNullable<typeof refund> => {
-        if (!refund) return false;
-        const normalizedStatus = normalizeRefundStatus(refund.refundStatus);
-        return normalizedStatus === REFUND_STATUS_PENDING || previousMatchedRefundIds.includes(refund.id);
+        return Boolean(refund);
       });
       const refundContracts = await Promise.all(
         selectedRefundRows.map((refund) => storage.getContract(refund.contractId)),
@@ -6430,12 +6429,6 @@ export async function registerRoutes(
         });
       }
 
-      if (selectedRefundRows.length > 0) {
-        await storage.updateRefundStatuses(
-          selectedRefundRows.map((refund) => refund.id),
-          REFUND_STATUS_OFFSET,
-        );
-      }
       await replaceDepositRefundMatches(
         depositId,
         selectedRefundRows.map((refund) => refund.id),
@@ -6469,7 +6462,6 @@ export async function registerRoutes(
       const existing = await storage.getDeposit(depositId);
       const matchedRefundIds = await getDepositRefundMatchIds(depositId);
       if (matchedRefundIds.length > 0) {
-        await storage.updateRefundStatuses(matchedRefundIds, REFUND_STATUS_PENDING);
         await clearDepositRefundMatches(depositId);
       }
       await markContractDepositDeleted(existing?.contractId);
@@ -6500,7 +6492,6 @@ export async function registerRoutes(
         if (!existing) continue;
         const matchedRefundIds = await getDepositRefundMatchIds(id);
         if (matchedRefundIds.length > 0) {
-          await storage.updateRefundStatuses(matchedRefundIds, REFUND_STATUS_PENDING);
           await clearDepositRefundMatches(id);
         }
         await markContractDepositDeleted(existing.contractId);
