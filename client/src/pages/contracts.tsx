@@ -3151,9 +3151,159 @@ export default function ContractsPage() {
                       : ""}
                   </div>
                 )}
-                <div className="flex min-h-0 flex-col gap-1">
+                <div className="flex min-h-0 flex-col gap-2">
                   <Label className="text-sm font-medium">상품 정보</Label>
-                <div className="overflow-x-auto rounded-none border bg-white">
+                  <div className="grid gap-2 lg:hidden">
+                    {productItems.map((item, index) => (
+                      <div key={item.id} className="space-y-2 rounded-none border bg-white p-2">
+                        <div className="grid gap-2">
+                          <div className="space-y-1">
+                            <Label className="text-[11px] text-muted-foreground">상품명</Label>
+                            <AutocompleteInput
+                              value={item.productName}
+                              onChange={(value) => updateProductItem(item.id, { productName: value })}
+                              options={productNameOptions}
+                              placeholder="상품명 검색"
+                              className="h-8 rounded-none text-sm"
+                              testId={`edit-mobile-select-product-${index}`}
+                              disabled={isEditReadOnly}
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-[11px] text-muted-foreground">사용자ID</Label>
+                            <Input
+                              value={item.userIdentifier}
+                              onChange={(e) => updateProductItem(item.id, { userIdentifier: e.target.value })}
+                              className="h-8 rounded-none text-sm"
+                              placeholder="사용자ID 입력"
+                              data-testid={`edit-mobile-input-user-id-${index}`}
+                              disabled={isEditReadOnly}
+                            />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2">
+                          <div className="space-y-1">
+                            <Label className="text-[11px] text-muted-foreground">단가</Label>
+                            <Input
+                              type="number"
+                              value={getProductItemNumericInputValue(item, "unitPrice")}
+                              onChange={(e) => handleProductItemNumericInputChange(item, "unitPrice", e.target.value)}
+                              onBlur={() => handleProductItemNumericInputBlur(item, "unitPrice", 0)}
+                              className="h-8 rounded-none text-right text-sm"
+                              data-testid={`edit-mobile-input-unit-price-${index}`}
+                              disabled={isEditReadOnly}
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-[11px] text-muted-foreground">일수</Label>
+                            <Input
+                              type="number"
+                              value={isViralItem(item) ? 1 : getProductItemNumericInputValue(item, "days")}
+                              onChange={(e) => handleProductItemNumericInputChange(item, "days", e.target.value)}
+                              onBlur={() => handleProductItemNumericInputBlur(item, "days", 1)}
+                              className={`h-8 rounded-none text-right text-sm ${isViralItem(item) ? "bg-muted" : ""}`}
+                              min="1"
+                              data-testid={`edit-mobile-input-days-${index}`}
+                              disabled={isEditReadOnly || isViralItem(item)}
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-[11px] text-muted-foreground">수량</Label>
+                            <Input
+                              type="number"
+                              value={getProductItemNumericInputValue(item, "quantity")}
+                              onChange={(e) => handleProductItemNumericInputChange(item, "quantity", e.target.value)}
+                              onBlur={() => handleProductItemNumericInputBlur(item, "quantity", 0)}
+                              className="h-8 rounded-none text-right text-sm"
+                              min="0"
+                              data-testid={`edit-mobile-input-quantity-${index}`}
+                              disabled={isEditReadOnly}
+                            />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="space-y-1">
+                            <Label className="text-[11px] text-muted-foreground">부가세구분</Label>
+                            <Select
+                              value={item.vatType}
+                              onValueChange={(value) => updateProductItem(item.id, { vatType: value })}
+                              disabled={isEditReadOnly}
+                            >
+                              <SelectTrigger className="h-8 rounded-none text-sm" data-testid={`edit-mobile-select-vat-${index}`}>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent className="rounded-none">
+                                <SelectItem value="포함">포함</SelectItem>
+                                <SelectItem value="미포함">미포함</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-[11px] text-muted-foreground">작업자</Label>
+                            <div className="flex h-8 items-center rounded-none border px-2 text-sm text-muted-foreground">
+                              {item.worker || "-"}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2 border-t pt-2 text-xs">
+                          <div>
+                            <span className="block text-muted-foreground">공급가액</span>
+                            <span className="font-medium">{formatCurrency(calculateSupplyAmount(item))}</span>
+                          </div>
+                          <div>
+                            <span className="block text-muted-foreground">작업비</span>
+                            <span className="font-medium">{formatCurrency(calculateWorkCost(item))}</span>
+                          </div>
+                          <div>
+                            <span className="block text-muted-foreground">마진</span>
+                            <span className="font-medium">{formatCurrency(getItemMargin(item))}</span>
+                          </div>
+                        </div>
+                        {!isEditReadOnly && (
+                          <div className="flex justify-between gap-2">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-8 rounded-none px-3 text-xs"
+                              onClick={() => handleFormWorkCostOverrideOpen(item)}
+                              data-testid={`button-work-cost-override-edit-mobile-${index}`}
+                            >
+                              작업비 수정
+                            </Button>
+                            {productItems.length > 1 && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 rounded-none px-2 text-xs text-muted-foreground"
+                                onClick={() => removeProductItem(item.id)}
+                                data-testid={`edit-mobile-button-remove-product-${index}`}
+                              >
+                                삭제
+                              </Button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                    <div className="rounded-none border bg-white px-2 py-1.5">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 rounded-none gap-1 px-1.5 text-xs text-muted-foreground"
+                        onClick={addProductItem}
+                        data-testid="edit-mobile-button-add-product-item"
+                        disabled={isEditReadOnly}
+                      >
+                        <Plus className="w-4 h-4" />
+                        새 항목 추가
+                      </Button>
+                    </div>
+                    <div className="rounded-none border bg-white px-2 py-1.5">
+                      {renderContractTotalsSummary()}
+                    </div>
+                  </div>
+                <div className="hidden overflow-x-auto rounded-none border bg-white lg:block">
                     <div className={productRowsViewportClassName}>
                     <table className="w-full min-w-[980px] table-fixed lg:min-w-[1300px]">
                       <thead className="sticky top-0 z-10 bg-muted/30">
@@ -3583,7 +3733,7 @@ export default function ContractsPage() {
       <Card className="overflow-hidden rounded-none border">
         <CardContent className="p-0">
           <Table
-            className="min-w-full table-fixed lg:min-w-[980px] xl:min-w-[1180px] 2xl:min-w-[1380px]"
+            className="w-full min-w-full table-fixed lg:min-w-[980px] xl:min-w-[1180px] 2xl:min-w-[1380px]"
             wrapperClassName="overflow-auto"
             wrapperStyle={{ maxHeight: contractsTableViewportMaxHeight }}
           >
