@@ -2561,9 +2561,9 @@ export default function ContractsPage() {
   const contractsTableViewportMaxHeight = stickyToolbarHeight > 0
     ? `calc(100vh - ${stickyToolbarHeight + 96}px)`
     : "calc(100vh - 320px)";
-  const mobileOptionalColumnClass = "hidden lg:table-cell";
-  const desktopOnlyColumnClass = "hidden xl:table-cell";
-  const profitColumnClass = "hidden 2xl:table-cell";
+  const mobileOptionalColumnClass = "";
+  const desktopOnlyColumnClass = "";
+  const profitColumnClass = "";
 
   const productNameOptions = useMemo(() => {
     return Array.from(
@@ -3689,8 +3689,8 @@ export default function ContractsPage() {
       <Card className="overflow-hidden rounded-none border">
         <CardContent className="p-0">
           <Table
-            className="w-full min-w-full table-fixed lg:min-w-[980px] xl:min-w-[1180px] 2xl:min-w-[1380px]"
-            wrapperClassName="overflow-auto"
+            className="w-full min-w-[1380px] table-fixed"
+            wrapperClassName="overflow-auto overscroll-x-contain [-webkit-overflow-scrolling:touch]"
             wrapperStyle={{ maxHeight: contractsTableViewportMaxHeight }}
           >
             <TableHeader
