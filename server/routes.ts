@@ -187,6 +187,113 @@ async function unmarkContractDepositDeleted(contractId: string | null | undefine
   await pool.query(`DELETE FROM deleted_contract_deposits WHERE contract_id = $1`, [normalized]);
 }
 
+function addCalendarDays(date: Date, days: number): Date {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function toDateOnlyAtNoon(value: Date): Date {
+  return new Date(value.getFullYear(), value.getMonth(), value.getDate(), 12, 0, 0, 0);
+}
+
+function getRenewalDueDateForContract(
+  contractDateValue: Date | string | number | null | undefined,
+  dueOffsetDaysValue: unknown,
+) {
+  const contractDate = normalizeToKoreanContractDate(contractDateValue);
+  if (!contractDate) return null;
+  const baseDate = toDateOnlyAtNoon(contractDate);
+  const dueOffsetDays = Math.max(0, Math.round(Number(dueOffsetDaysValue) || 0));
+  return toDateOnlyAtNoon(addCalendarDays(baseDate, dueOffsetDays));
+}
+
+function normalizeOptionalContractDateField(value: unknown): Date | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || value === "") return null;
+  const normalizedDate = normalizeToKoreanContractDate(value as Date | string | number);
+  if (normalizedDate) return normalizedDate;
+  if (typeof value === "string" || typeof value === "number" || value instanceof Date) {
+    const parsedDate = new Date(value);
+    if (!Number.isNaN(parsedDate.getTime())) return parsedDate;
+  }
+  return undefined;
+}
+
+function getRenewalDurationDays(contract: {
+  days?: unknown;
+  productDetailsJson?: string | null;
+}) {
+  const itemDays = parseContractProductDetailsForWorkCost(contract.productDetailsJson)
+    .map((item) => Math.max(0, Math.round(Number(item.days) || 0)));
+  const contractDays = Math.max(0, Math.round(Number(contract.days) || 0));
+  return Math.max(0, contractDays, ...itemDays);
+}
+
+const RENEWAL_SLOT_CATEGORY_KEY = "\uC2AC\uB86F\uC0C1\uD488";
+
+function normalizeRenewalProductLookupKey(value: unknown): string {
+  return normalizeText(value).replace(/\s+/g, "").toLowerCase();
+}
+
+function getRenewalProductByName(allProducts: Array<{ name?: string | null; category?: string | null }>) {
+  return new Map(
+    allProducts
+      .map((product) => [normalizeRenewalProductLookupKey(product.name), product] as const)
+      .filter(([name]) => !!name),
+  );
+}
+
+function isSlotRenewalProduct(
+  productName: unknown,
+  productByName: Map<string, { name?: string | null; category?: string | null }>,
+) {
+  const product = productByName.get(normalizeRenewalProductLookupKey(productName));
+  return normalizeRenewalProductLookupKey(product?.category) === normalizeRenewalProductLookupKey(RENEWAL_SLOT_CATEGORY_KEY);
+}
+
+function getRenewalDueOffsetDays(
+  contract: { days?: unknown; products?: string | null; productDetailsJson?: string | null },
+  allProducts: Array<{ name?: string | null; category?: string | null }>,
+) {
+  const productByName = getRenewalProductByName(allProducts);
+  const itemRows = parseContractProductDetailsForWorkCost(contract.productDetailsJson)
+    .map((item) => ({
+      productName: item.productName,
+      days: Math.max(0, Math.round(Number(item.days) || 0)),
+    }));
+  const contractDays = Math.max(0, Math.round(Number(contract.days) || 0));
+  const rows = itemRows.length > 0
+    ? itemRows
+    : String(contract.products || "")
+      .split(",")
+      .map((productName) => ({ productName: normalizeText(productName), days: contractDays }))
+      .filter((item) => item.productName);
+  if (rows.length === 0) return contractDays;
+  return Math.max(
+    0,
+    ...rows.map((item) => item.days + (isSlotRenewalProduct(item.productName, productByName) ? 1 : 0)),
+  );
+}
+
+function resolveRenewalSchedulePayload<T extends Record<string, any>>(
+  contract: T,
+  allProducts: Array<{ name?: string | null; category?: string | null }>,
+) {
+  if (contract.contractType === CONTRACT_TYPE_REFUND) return contract;
+  const durationDays = getRenewalDurationDays(contract);
+  const dueOffsetDays = getRenewalDueOffsetDays(contract, allProducts);
+  const next: Record<string, any> = { ...contract };
+  if (!Object.prototype.hasOwnProperty.call(next, "renewalDueDate")) {
+    const dueDate = getRenewalDueDateForContract(next.contractDate, dueOffsetDays);
+    if (dueDate) next.renewalDueDate = dueDate;
+  }
+  if (durationDays <= 1) {
+    next.renewalAlertDisabled = true;
+  }
+  return next as T;
+}
+
 let cachedTimezone = "Asia/Seoul";
 let timezoneCacheTime = 0;
 async function getSystemTimezone(): Promise<string> {
@@ -432,6 +539,8 @@ async function ensureContractColumns() {
     ALTER TABLE contracts
     ADD COLUMN IF NOT EXISTS product_details_json text,
     ADD COLUMN IF NOT EXISTS deposit_bank text,
+    ADD COLUMN IF NOT EXISTS renewal_due_date timestamp,
+    ADD COLUMN IF NOT EXISTS renewal_alert_disabled boolean NOT NULL DEFAULT false,
     ADD COLUMN IF NOT EXISTS contract_type text,
     ADD COLUMN IF NOT EXISTS source_contract_id varchar,
     ADD COLUMN IF NOT EXISTS source_item_id text
@@ -3138,6 +3247,7 @@ export async function registerRoutes(
   app.use("/api/system-logs", requireAuth);
   app.use("/api/products", requireAuth);
   app.use("/api/product-rate-histories", requireAuth);
+  app.use("/api/renewal-alerts", requireAuth);
   app.use("/api/contracts", requireAuth);
   app.use("/api/refunds", requireAuth);
   app.use("/api/permissions", requireAuth);
@@ -4892,6 +5002,82 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/renewal-alerts", async (req, res) => {
+    try {
+      const currentUser = req.session.userId ? await storage.getUser(req.session.userId) : null;
+      if (!currentUser) return res.status(401).json({ error: "Login required" });
+      const todayEnd = new Date();
+      todayEnd.setHours(23, 59, 59, 999);
+      const managerId = String(currentUser.id || "").trim() || null;
+      const managerName = String(currentUser.name || "").trim();
+      const result = await pool.query(
+        `
+          SELECT
+            id,
+            manager_id AS "managerId",
+            manager_name AS "managerName",
+            contract_number AS "contractNumber",
+            customer_name AS "customerName",
+            products,
+            product_details_json AS "productDetailsJson",
+            contract_date AS "contractDate",
+            renewal_due_date AS "renewalDueDate",
+            renewal_alert_disabled AS "renewalAlertDisabled",
+            created_at AS "createdAt"
+          FROM contracts
+          WHERE renewal_due_date IS NOT NULL
+            AND COALESCE(renewal_alert_disabled, false) = false
+            AND COALESCE(contract_type, '') <> $4
+            AND renewal_due_date <= $1
+            AND (
+              ($2::text IS NOT NULL AND manager_id = $2)
+              OR lower(btrim(manager_name)) = lower(btrim($3))
+            )
+          ORDER BY renewal_due_date ASC, created_at ASC
+        `,
+        [todayEnd, managerId, managerName, CONTRACT_TYPE_REFUND],
+      );
+      res.json(result.rows);
+    } catch (error) {
+      console.error("Error fetching renewal alerts:", error);
+      res.status(500).json({ error: "Failed to fetch renewal alerts" });
+    }
+  });
+
+  app.post("/api/renewal-alerts/:contractId/disable", async (req, res) => {
+    try {
+      const currentUser = req.session.userId ? await storage.getUser(req.session.userId) : null;
+      if (!currentUser) return res.status(401).json({ error: "Login required" });
+      const managerId = String(currentUser.id || "").trim() || null;
+      const managerName = String(currentUser.name || "").trim();
+      const result = await pool.query(
+        `
+          UPDATE contracts
+          SET renewal_alert_disabled = true
+          WHERE id = $1
+            AND (
+              ($2::text IS NOT NULL AND manager_id = $2)
+              OR lower(btrim(manager_name)) = lower(btrim($3))
+            )
+          RETURNING contract_number
+        `,
+        [req.params.contractId, managerId, managerName],
+      );
+      if (result.rowCount === 0) {
+        return res.status(404).json({ error: "Renewal alert not found" });
+      }
+      await writeSystemLog(req, {
+        actionType: "renewal_alert_disable",
+        action: "계약연장 알림 해제",
+        details: `contractId=${req.params.contractId}, contractNumber=${result.rows[0]?.contract_number || ""}`,
+      });
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error disabling renewal alert:", error);
+      res.status(500).json({ error: "Failed to disable renewal alert" });
+    }
+  });
+
   app.post("/api/products", async (req, res) => {
     try {
       const body = { ...(req.body ?? {}) } as Record<string, unknown>;
@@ -5024,6 +5210,7 @@ export async function registerRoutes(
       const pageSize = toPositiveInt(req.query.pageSize as string | string[] | undefined, 10);
 
       const search = toSingleString(req.query.search as string | string[] | undefined).trim();
+      const contractNumber = toSingleString(req.query.contractNumber as string | string[] | undefined).trim();
       const managerName = toSingleString(req.query.manager as string | string[] | undefined).trim();
       const customerName = toSingleString(req.query.customer as string | string[] | undefined).trim();
       const productCategory = toSingleString(req.query.productCategory as string | string[] | undefined).trim();
@@ -5035,16 +5222,17 @@ export async function registerRoutes(
       const result = await storage.getContractsPaged({
         page,
         pageSize,
-        search: search || undefined,
-        managerName: managerName && managerName !== "all" ? managerName : undefined,
-        customerName: customerName && customerName !== "all" ? customerName : undefined,
-        productCategory: productCategory && productCategory !== "all" ? productCategory : undefined,
-        paymentMethod: paymentMethod && paymentMethod !== "all" ? paymentMethod : undefined,
+        search: contractNumber ? undefined : search || undefined,
+        contractNumber: contractNumber || undefined,
+        managerName: !contractNumber && managerName && managerName !== "all" ? managerName : undefined,
+        customerName: !contractNumber && customerName && customerName !== "all" ? customerName : undefined,
+        productCategory: !contractNumber && productCategory && productCategory !== "all" ? productCategory : undefined,
+        paymentMethod: !contractNumber && paymentMethod && paymentMethod !== "all" ? paymentMethod : undefined,
         sort: sort === "contractDateAsc" || sort === "customerNameAsc" || sort === "contractDateDesc"
           ? sort
           : undefined,
-        startDate,
-        endDate,
+        startDate: contractNumber ? undefined : startDate,
+        endDate: contractNumber ? undefined : endDate,
       });
 
       res.json({
@@ -5225,6 +5413,7 @@ export async function registerRoutes(
           body.contractDate = new Date(body.contractDate);
         }
       }
+      body.renewalDueDate = normalizeOptionalContractDateField(body.renewalDueDate);
       const parsed = insertContractSchema.safeParse(body);
       if (!parsed.success) {
         return res.status(400).json({ error: "Invalid contract data", details: parsed.error });
@@ -5239,14 +5428,15 @@ export async function registerRoutes(
         storage.getProducts(),
         storage.getProductRateHistories(),
       ]);
+      const contractDataWithRenewal = resolveRenewalSchedulePayload(normalizedContractData, allProducts);
       const normalizedWorkCost = computeContractWorkCostFromProducts(
-        normalizedContractData,
+        contractDataWithRenewal,
         allProducts,
         allProductRateHistories,
       );
       const contract = await db.transaction(async (tx) => {
         const [createdContract] = await tx.insert(contracts).values({
-          ...normalizedContractData,
+          ...contractDataWithRenewal,
           contractName: null,
           workCost: normalizedWorkCost,
         }).returning();
@@ -5294,6 +5484,9 @@ export async function registerRoutes(
           body.contractDate = new Date(body.contractDate);
         }
       }
+      if (Object.prototype.hasOwnProperty.call(body, "renewalDueDate")) {
+        body.renewalDueDate = normalizeOptionalContractDateField(body.renewalDueDate);
+      }
       const parsed = insertContractSchema.partial().safeParse(body);
       if (!parsed.success) {
         return res.status(400).json({ error: "Invalid contract data", details: parsed.error });
@@ -5326,16 +5519,41 @@ export async function registerRoutes(
       }
       const shouldRecomputeWorkCost = ["products", "days", "quantity", "addQuantity", "extendQuantity", "workCost"]
         .some((key) => Object.prototype.hasOwnProperty.call(normalizedParsedData, key));
+      let allProductsForUpdate: Array<{ name?: string | null; category?: string | null }> | undefined;
       if (shouldRecomputeWorkCost) {
         const [allProducts, allProductRateHistories] = await Promise.all([
           storage.getProducts(),
           storage.getProductRateHistories(),
         ]);
+        allProductsForUpdate = allProducts;
         updatePayload.workCost = computeContractWorkCostFromProducts(
           { ...existingContract, ...normalizedParsedData },
           allProducts,
           allProductRateHistories,
         );
+      }
+      const renewalBasePayload = { ...existingContract, ...normalizedParsedData, ...updatePayload };
+      const shouldRecomputeRenewalSchedule = [
+        "contractDate",
+        "products",
+        "days",
+        "productDetailsJson",
+        "quantity",
+        "addQuantity",
+        "extendQuantity",
+      ].some((key) => Object.prototype.hasOwnProperty.call(normalizedParsedData, key));
+      const renewalDurationDays = getRenewalDurationDays(renewalBasePayload);
+      if (
+        existingContract.contractType !== CONTRACT_TYPE_REFUND &&
+        (shouldRecomputeRenewalSchedule || !Object.prototype.hasOwnProperty.call(normalizedParsedData, "renewalDueDate"))
+      ) {
+        allProductsForUpdate = allProductsForUpdate || await storage.getProducts();
+        const dueOffsetDays = getRenewalDueOffsetDays(renewalBasePayload, allProductsForUpdate);
+        const dueDate = getRenewalDueDateForContract(renewalBasePayload.contractDate, dueOffsetDays);
+        if (dueDate) updatePayload.renewalDueDate = dueDate;
+      }
+      if (existingContract.contractType !== CONTRACT_TYPE_REFUND && renewalDurationDays <= 1) {
+        updatePayload.renewalAlertDisabled = true;
       }
 
       const contract = await db.transaction(async (tx) => {

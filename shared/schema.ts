@@ -342,6 +342,8 @@ export const contracts = pgTable("contracts", {
   executionPaymentStatus: text("execution_payment_status").default("입금예정"),
   userIdentifier: text("user_identifier"),
   productDetailsJson: text("product_details_json"),
+  renewalDueDate: timestamp("renewal_due_date"),
+  renewalAlertDisabled: boolean("renewal_alert_disabled").notNull().default(false),
   contractType: text("contract_type"),
   sourceContractId: varchar("source_contract_id"),
   sourceItemId: text("source_item_id"),

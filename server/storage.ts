@@ -221,6 +221,7 @@ export type ContractPagedQuery = {
   page: number;
   pageSize: number;
   search?: string;
+  contractNumber?: string;
   managerName?: string;
   customerName?: string;
   productCategory?: string;
@@ -523,6 +524,7 @@ export class DatabaseStorage implements IStorage {
     const sort = params.sort || "contractDateDesc";
 
     const search = String(params.search || "").trim();
+    const contractNumber = String(params.contractNumber || "").trim();
     const managerName = String(params.managerName || "").trim();
     const customerName = String(params.customerName || "").trim();
     const productCategory = String(params.productCategory || "").trim();
@@ -532,6 +534,10 @@ export class DatabaseStorage implements IStorage {
 
     if (managerName) {
       filters.push(eq(contracts.managerName, managerName));
+    }
+
+    if (contractNumber) {
+      filters.push(eq(contracts.contractNumber, contractNumber));
     }
 
     if (customerName) {
