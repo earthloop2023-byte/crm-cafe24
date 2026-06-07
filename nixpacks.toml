@@ -1,8 +1,8 @@
-providers = ["node"]
-
 [variables]
 NIXPACKS_NODE_VERSION = "20"
 NIXPACKS_METADATA = "node"
+
+providers = ["node"]
 
 [phases.install]
 cmds = ["npm ci --no-audit --no-fund"]
