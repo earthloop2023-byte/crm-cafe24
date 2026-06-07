@@ -680,38 +680,6 @@ export default function ContractsPage() {
     },
   });
 
-  const bulkMarkDepositConfirmedMutation = useMutation({
-    mutationFn: (ids: string[]) =>
-      apiRequest("POST", "/api/contracts/bulk-mark-deposit-confirmed", { ids }),
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["/api/contracts"] }),
-        queryClient.invalidateQueries({ queryKey: ["/api/contracts/paged"] }),
-        queryClient.invalidateQueries({ queryKey: ["/api/contracts-with-financials"] }),
-        queryClient.invalidateQueries({ queryKey: ["/api/payments"] }),
-        queryClient.invalidateQueries({ queryKey: ["/api/deposits"] }),
-        queryClient.invalidateQueries({ queryKey: ["/api/deposits/contracts-by-department"] }),
-        queryClient.invalidateQueries({ queryKey: ["/api/sales-analytics"] }),
-      ]);
-      setSelectedItems([]);
-      setSelectedRowMap({});
-      toast({ title: "선택 계약의 결제확인을 입금완료로 변경했습니다." });
-    },
-    onError: () => {
-      toast({ title: "입금완료 일괄 변경에 실패했습니다.", variant: "destructive" });
-    },
-  });
-
-  const updatePaymentMutation = useMutation({
-    mutationFn: ({ id, paymentConfirmed }: { id: string; paymentConfirmed: boolean }) =>
-      apiRequest("PUT", `/api/contracts/${id}`, { paymentConfirmed }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/contracts"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/contracts/paged"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/contracts-with-financials"] });
-    },
-  });
-
   const updateMutation = useMutation({
     mutationFn: async ({ id, data }: { id: string; data: Partial<InsertContract> }) => {
       const res = await apiRequest("PUT", `/api/contracts/${id}`, data);
@@ -1623,8 +1591,9 @@ export default function ContractsPage() {
       workCost: totalWorkCost,
       worker: workerNames,
       userIdentifier: userIdentifiers,
-      paymentMethod: normalizePaymentMethodForForm(formData.paymentMethod),
-      depositBank: normalizeDepositBankForForm(formData.depositBank, formData.paymentMethod),
+      paymentConfirmed: false,
+      paymentMethod: DEFAULT_CREATE_PAYMENT_METHOD,
+      depositBank: normalizeDepositBankForForm(formData.depositBank, DEFAULT_CREATE_PAYMENT_METHOD),
       invoiceIssued: deriveInvoiceIssuedText(storedProductItems, formData.invoiceIssued),
       productDetailsJson: storedProductItems.length > 0 ? JSON.stringify(storedProductItems) : null,
       renewalAlertDisabled: renewalDurationDays <= 1
@@ -1648,11 +1617,11 @@ export default function ContractsPage() {
       customerName: contractToOpen.customerName,
       products: contractToOpen.products || "",
       cost: contractToOpen.cost,
-      paymentConfirmed: contractToOpen.paymentConfirmed || false,
-      paymentMethod: normalizePaymentMethodForForm(contractToOpen.paymentMethod),
+      paymentConfirmed: false,
+      paymentMethod: DEFAULT_CREATE_PAYMENT_METHOD,
       depositBank: normalizeDepositBankForForm(
         (contractToOpen as Contract & { depositBank?: string | null }).depositBank,
-        contractToOpen.paymentMethod,
+        DEFAULT_CREATE_PAYMENT_METHOD,
       ),
       invoiceIssued: deriveInvoiceIssuedText(displayItems, contractToOpen.invoiceIssued),
       worker: contractToOpen.worker || "",
@@ -1747,8 +1716,9 @@ export default function ContractsPage() {
       workCost: totalWorkCost,
       worker: workerNames,
       userIdentifier: userIdentifiers,
-      paymentMethod: normalizePaymentMethodForForm(formData.paymentMethod),
-      depositBank: normalizeDepositBankForForm(formData.depositBank, formData.paymentMethod),
+      paymentConfirmed: false,
+      paymentMethod: DEFAULT_CREATE_PAYMENT_METHOD,
+      depositBank: normalizeDepositBankForForm(formData.depositBank, DEFAULT_CREATE_PAYMENT_METHOD),
       invoiceIssued: deriveInvoiceIssuedText(storedProductItems, formData.invoiceIssued),
       productDetailsJson: storedProductItems.length > 0 ? JSON.stringify(storedProductItems) : null,
       renewalAlertDisabled: renewalDurationDays <= 1
@@ -1910,19 +1880,6 @@ export default function ContractsPage() {
     setRefundWorker(item.worker || contract.worker || "");
     setRefundReason("");
     setIsRefundOpen(true);
-  };
-
-  const handleBulkMarkDepositConfirmed = () => {
-    if (selectedContractIds.length === 0) {
-      toast({ title: "입금완료로 변경할 항목을 선택해주세요.", variant: "destructive" });
-      return;
-    }
-
-    if (!confirm(`선택한 ${selectedContractIds.length}개 계약의 결제확인을 입금완료로 변경하시겠습니까?`)) {
-      return;
-    }
-
-    bulkMarkDepositConfirmedMutation.mutate(selectedContractIds);
   };
 
   const handleRefundSubmit = () => {
@@ -2508,15 +2465,6 @@ export default function ContractsPage() {
             환불
           </Button>
           <Button
-            variant="outline"
-            className="hidden h-10 rounded-none px-3 xl:inline-flex"
-            onClick={handleBulkMarkDepositConfirmed}
-            disabled={selectedContractIds.length === 0 || bulkMarkDepositConfirmedMutation.isPending}
-            data-testid="button-bulk-mark-deposit-confirmed"
-          >
-            {bulkMarkDepositConfirmedMutation.isPending ? "변경 중..." : "입금완료 변경"}
-          </Button>
-          <Button
             className="h-10 rounded-none bg-primary px-4 hover:bg-primary/90"
             onClick={handleOpenCreateDialog}
             data-testid="button-create"
@@ -2811,8 +2759,8 @@ export default function ContractsPage() {
                       <div className="space-y-1">
                         <Label className="text-xs">결제확인</Label>
                         <Select
-                          value={formData.paymentMethod || ""}
-                          onValueChange={(value) => setFormData({ ...formData, paymentMethod: value })}
+                          value={DEFAULT_CREATE_PAYMENT_METHOD}
+                          disabled
                         >
                           <SelectTrigger className="h-8 rounded-none text-sm" data-testid="select-payment-method">
                             <SelectValue placeholder="선택" />
@@ -3184,9 +3132,8 @@ export default function ContractsPage() {
                       <div className="space-y-1">
                         <Label className="text-xs">결제확인</Label>
                         <Select
-                          value={formData.paymentMethod || ""}
-                          onValueChange={(value) => setFormData({ ...formData, paymentMethod: value })}
-                          disabled={isEditReadOnly || isPaymentMethodLocked}
+                          value={DEFAULT_CREATE_PAYMENT_METHOD}
+                          disabled
                         >
                           <SelectTrigger className="h-8 rounded-none text-sm" data-testid="edit-select-payment-method">
                             <SelectValue placeholder="선택" />
@@ -3199,11 +3146,6 @@ export default function ContractsPage() {
                             ))}
                           </SelectContent>
                         </Select>
-                        {isPaymentMethodLocked && (
-                          <p className="text-[11px] text-muted-foreground">
-                            입금완료와 매칭된 계약은 입금완료 목록에서 매칭 해제 후 변경할 수 있습니다.
-                          </p>
-                        )}
                       </div>
                       <div className="space-y-1">
                         <Label className="text-xs">입금통장</Label>
