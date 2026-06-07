@@ -205,6 +205,18 @@ function AutocompleteInput({
     }
   };
 
+  const handleDropdownWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    const dropdown = dropdownRef.current;
+    if (!dropdown) return;
+
+    const canScroll = dropdown.scrollHeight > dropdown.clientHeight;
+    if (!canScroll) return;
+
+    e.stopPropagation();
+    e.preventDefault();
+    dropdown.scrollTop += e.deltaY;
+  };
+
   return (
     <div ref={ref} className="relative">
       <Input
@@ -224,6 +236,7 @@ function AutocompleteInput({
           ref={dropdownRef}
           style={dropdownStyle}
           data-allow-dialog-outside-interaction="true"
+          onWheelCapture={handleDropdownWheel}
           className="max-h-48 overflow-y-auto rounded-none border bg-popover text-popover-foreground shadow-lg pointer-events-auto"
         >
           {visibleOptions.map((item, idx) => (
@@ -544,6 +557,16 @@ export default function ContractsPage() {
       new Set(customers.map((customer) => normalizeText(customer.name)).filter(Boolean))
     ).sort((a, b) => a.localeCompare(b, "ko"));
   }, [customers]);
+
+  const companyCustomers = useMemo(() => {
+    return customers.filter((customer) => customer.lifecycleStage === "customer");
+  }, [customers]);
+
+  const companyCustomerNameOptions = useMemo(() => {
+    return Array.from(
+      new Set(companyCustomers.map((customer) => normalizeText(customer.name)).filter(Boolean))
+    ).sort((a, b) => a.localeCompare(b, "ko"));
+  }, [companyCustomers]);
 
   const productFilterOptions = useMemo(() => {
     return Array.from(
@@ -2560,7 +2583,7 @@ export default function ContractsPage() {
                     <AutocompleteInput
                       value={formData.customerName || ""}
                       onChange={(value) => {
-                        const selectedCustomer = customers.find(c => c.name === value);
+                        const selectedCustomer = companyCustomers.find(c => c.name === value);
                         setFormData({
                           ...formData,
                           customerId: selectedCustomer?.id || undefined,
@@ -2568,7 +2591,7 @@ export default function ContractsPage() {
                           contractNumber: selectedCustomer?.email || formData.contractNumber || "",
                         });
                       }}
-                      options={customers.map(c => c.name).filter(Boolean)}
+                      options={companyCustomerNameOptions}
                       placeholder="고객명 검색"
                       className="h-8 rounded-none text-sm"
                       testId="select-customer"
@@ -2925,7 +2948,7 @@ export default function ContractsPage() {
                     <AutocompleteInput
                       value={formData.customerName || ""}
                       onChange={(value) => {
-                        const selectedCustomer = customers.find(c => c.name === value);
+                        const selectedCustomer = companyCustomers.find(c => c.name === value);
                         setFormData({
                           ...formData,
                           customerId: selectedCustomer?.id || undefined,
@@ -2933,7 +2956,7 @@ export default function ContractsPage() {
                           contractNumber: selectedCustomer?.email || formData.contractNumber || "",
                         });
                       }}
-                      options={customers.map(c => c.name)}
+                      options={companyCustomerNameOptions}
                       placeholder="고객명 검색"
                       className="h-8 rounded-none text-sm"
                       testId="edit-select-customer"
