@@ -8,7 +8,7 @@ NIXPACKS_METADATA = "node"
 cmds = ["npm ci --no-audit --no-fund"]
 
 [phases.build]
-cmds = ["npm run build"]
+cmds = ["echo using prebuilt dist"]
 
 [start]
-cmd = "node scripts/cafe24-start.mjs"
+cmd = "node dist/index.js"
