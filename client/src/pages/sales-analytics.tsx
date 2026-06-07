@@ -65,6 +65,7 @@ type ContractRow = {
   quantity?: number | string | null;
   productDetailsJson?: string | null;
   contractType?: string | null;
+  contractStatus?: string | null;
   paymentConfirmed?: boolean | null;
   paymentMethod?: string | null;
   executionPaymentStatus?: string | null;
@@ -239,6 +240,10 @@ function isRefundContract(contract: ContractRow): boolean {
   return String(contract.contractType || "").toLowerCase() === "refund" || toAmount(contract.cost) < 0;
 }
 
+function isWithdrawnContract(contract: ContractRow): boolean {
+  return String(contract.contractStatus || "").trim().toLowerCase() === "withdrawn";
+}
+
 function isSlotProduct(name: string): boolean {
   return name.replace(/\s+/g, "").includes("슬롯");
 }
@@ -295,6 +300,7 @@ function getItemQuantity(item: ContractItem, contract?: ContractRow): number {
 }
 
 function getContractSalesAmount(contract: ContractRow): number {
+  if (isWithdrawnContract(contract)) return 0;
   if (isRefundContract(contract)) return 0;
   const items = parseProductItems(contract);
   const itemSupply = items.reduce((sum, item) => sum + toAmount(item.supplyAmount), 0);
@@ -316,6 +322,7 @@ function getStoredItemWorkCost(item: ContractItem): number {
 }
 
 function getContractWorkCost(contract: ContractRow): number {
+  if (isWithdrawnContract(contract)) return 0;
   if (isRefundContract(contract)) return 0;
   const items = parseProductItems(contract);
   const storedItemWorkCost = items.reduce((sum, item) => sum + getStoredItemWorkCost(item), 0);
@@ -336,6 +343,7 @@ function getContractWorkCost(contract: ContractRow): number {
 }
 
 function getContractSlotDays(contract: ContractRow, productByName: Map<string, ProductRow>): number {
+  if (isWithdrawnContract(contract)) return 0;
   if (isRefundContract(contract)) return 0;
   const items = parseProductItems(contract);
   if (items.length > 0) {
@@ -414,8 +422,9 @@ export default function SalesAnalyticsPage() {
   };
 
   const accessibleContracts = useMemo(() => {
-    if (!isManagerUser) return contracts;
-    return contracts.filter(isOwnManagedContract);
+    const activeContracts = contracts.filter((contract) => !isWithdrawnContract(contract));
+    if (!isManagerUser) return activeContracts;
+    return activeContracts.filter(isOwnManagedContract);
   }, [contracts, currentUser?.id, currentUser?.name, isManagerUser]);
 
   const accessibleContractIds = useMemo(
@@ -612,9 +621,9 @@ export default function SalesAnalyticsPage() {
   };
 
   const resetFilters = () => {
-    setStartDate(`${todayKey.slice(0, 8)}01`);
+    setStartDate(`${todayKey.slice(0, 4)}-01-01`);
     setEndDate(todayKey);
-    setPeriodFilter("thisMonth");
+    setPeriodFilter("thisYear");
     setSearchTerm("");
     setManagerFilter("all");
     setChartYear(todayKey.slice(0, 4));

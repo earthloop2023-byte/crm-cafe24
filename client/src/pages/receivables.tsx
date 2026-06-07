@@ -12,7 +12,7 @@ import { Pagination } from "@/components/pagination";
 import { format } from "date-fns";
 import * as XLSX from "xlsx";
 import type { Contract, Deposit } from "@shared/schema";
-import { getKoreanDateKey, getKoreanEndOfDay, getKoreanStartOfMonth } from "@/lib/korean-time";
+import { getKoreanDateKey, getKoreanEndOfDay, getKoreanStartOfMonth, getKoreanStartOfYear } from "@/lib/korean-time";
 import { useSettings } from "@/lib/settings";
 import { useToast } from "@/hooks/use-toast";
 import { matchesKoreanSearch } from "@shared/korean-search";
@@ -64,6 +64,10 @@ function normalizePaymentMethod(value: unknown) {
 function isRefundContract(contract: Contract) {
   return normalizeText((contract as Contract & { contractType?: string | null }).contractType) === CONTRACT_TYPE_REFUND ||
     (Number(contract.cost) || 0) < 0;
+}
+
+function isWithdrawnContract(contract: Contract) {
+  return normalizeText((contract as Contract & { contractStatus?: string | null }).contractStatus).toLowerCase() === "withdrawn";
 }
 
 function getSignedContractAmount(contract: Contract) {
@@ -148,6 +152,7 @@ export default function ReceivablesPage() {
   const receivableRows = useMemo(() => {
     const grouped = new Map<string, Contract[]>();
     for (const contract of allContracts) {
+      if (isWithdrawnContract(contract)) continue;
       const customerKey = normalizeCompactText(contract.customerName);
       if (!customerKey) continue;
       if (!grouped.has(customerKey)) grouped.set(customerKey, []);
@@ -297,7 +302,7 @@ export default function ReceivablesPage() {
     setCustomerFilter("all");
     setManagerFilter("all");
     setStatusFilter("all");
-    setStartDate(getKoreanStartOfMonth());
+    setStartDate(getKoreanStartOfYear());
     setEndDate(getKoreanEndOfDay());
     setCurrentPage(1);
     setSelectedReceivableRowKeys(new Set());

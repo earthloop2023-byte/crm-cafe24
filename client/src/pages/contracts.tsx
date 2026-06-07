@@ -20,6 +20,7 @@ import {
   Copy,
   CalendarIcon,
   Bell,
+  Ban,
   RotateCcw,
   ChevronDown,
   GripVertical,
@@ -35,9 +36,9 @@ import { useAuth } from "@/lib/auth";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { format } from "date-fns";
 import { ko } from "date-fns/locale";
-import type { Contract, Deposit, InsertContract, User, Customer, Product, ProductRateHistory, Refund } from "@shared/schema";
+import type { Contract, Deposit, InsertContract, User, Customer, Product, ProductRateHistory, Refund, SystemLog } from "@shared/schema";
 import { Textarea } from "@/components/ui/textarea";
-import { getKoreanNow, getKoreanStartOfMonth, getKoreanEndOfDay, getKoreanDateKey } from "@/lib/korean-time";
+import { getKoreanNow, getKoreanStartOfMonth, getKoreanStartOfYear, getKoreanEndOfDay, getKoreanDateKey } from "@/lib/korean-time";
 import { useSettings } from "@/lib/settings";
 import { formatCeilAmount } from "@/lib/utils";
 import { matchesKoreanSearch } from "@shared/korean-search";
@@ -47,6 +48,8 @@ const DEFAULT_CREATE_DEPOSIT_BANK = "국민은행";
 const DEFAULT_CREATE_VAT_TYPE = "포함";
 const CONTRACT_PAYMENT_METHOD_OPTIONS = ["입금예정", "입금완료", "기타"] as const;
 const CONTRACT_DEPOSIT_BANK_OPTIONS = ["국민은행", "카드결제", "크몽", "기타"] as const;
+const CONTRACT_STATUS_WITHDRAWN = "withdrawn";
+const TEAM_LEAD_OR_HIGHER_ROLES = new Set(["팀장", "실장", "이사", "대표", "대표이사", "총괄이사", "개발자"]);
 
 function AutocompleteInput({ 
   value, 
@@ -539,6 +542,20 @@ export default function ContractsPage() {
     queryKey: ["/api/refunds"],
   });
 
+  const { data: contractHistoryLogs = [] } = useQuery<SystemLog[]>({
+    queryKey: ["/api/contracts", editingContractId, "history"],
+    queryFn: async () => {
+      const res = await fetch(`/api/contracts/${editingContractId}/history`, {
+        credentials: "include",
+      });
+      if (!res.ok) {
+        throw new Error(await res.text());
+      }
+      return res.json();
+    },
+    enabled: Boolean(isEditOpen && editingContractId),
+  });
+
   const { data: productRateHistories = [] } = useQuery<ProductRateHistory[]>({
     queryKey: ["/api/product-rate-histories"],
   });
@@ -677,6 +694,39 @@ export default function ContractsPage() {
     },
     onError: () => {
       toast({ title: "계약 삭제에 실패했습니다.", variant: "destructive" });
+    },
+  });
+
+  const withdrawMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiRequest("POST", `/api/contracts/${id}/withdraw`);
+      return (await res.json()) as Contract;
+    },
+    onSuccess: (updatedContract) => {
+      queryClient.setQueriesData<Contract[]>({ queryKey: ["/api/contracts"] }, (previousData) =>
+        Array.isArray(previousData)
+          ? previousData.map((contract) =>
+              contract.id === updatedContract.id ? { ...contract, ...updatedContract } : contract,
+            )
+          : previousData,
+      );
+      queryClient.setQueriesData<PagedContractsResponse>({ queryKey: ["/api/contracts/paged"] }, (previousData) =>
+        replaceContractInPagedResponse(previousData, updatedContract),
+      );
+      queryClient.invalidateQueries({ queryKey: ["/api/contracts"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/contracts/paged"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/contracts-with-financials"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/sales-analytics"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/deposits"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/deposits/contracts-by-department"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/payments"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/customers"] });
+      setSelectedItems([]);
+      setSelectedRowMap({});
+      toast({ title: "계약이 철회되었습니다." });
+    },
+    onError: (error: Error) => {
+      toast({ title: error.message || "계약 철회에 실패했습니다.", variant: "destructive" });
     },
   });
 
@@ -826,6 +876,7 @@ export default function ContractsPage() {
   });
 
   const currentUser = loggedInUser || null;
+  const canDeleteContracts = TEAM_LEAD_OR_HIGHER_ROLES.has(String(currentUser?.role || "").trim());
   const resolveManagerSelection = (
     managerNameValue: string | null | undefined,
     managerIdValue?: string | null | undefined,
@@ -962,6 +1013,21 @@ export default function ContractsPage() {
   const isRefundContract = (contract: Partial<Contract> | null | undefined) => {
     const typedContract = contract as (Partial<Contract> & { contractType?: string | null }) | null | undefined;
     return String(typedContract?.contractType || "").trim() === "refund" || Number(contract?.cost) < 0;
+  };
+  const isWithdrawnContract = (contract: Partial<Contract> | null | undefined) => {
+    const typedContract = contract as (Partial<Contract> & { contractStatus?: string | null }) | null | undefined;
+    return String(typedContract?.contractStatus || "").trim().toLowerCase() === CONTRACT_STATUS_WITHDRAWN;
+  };
+  const isDepositPendingContract = (contract: Partial<Contract> | null | undefined) => {
+    if (!contract || isRefundContract(contract) || isWithdrawnContract(contract)) return false;
+    const paymentMethod = normalizePaymentMethodForForm((contract as Partial<Contract> & { paymentMethod?: string | null }).paymentMethod);
+    return paymentMethod === DEFAULT_CREATE_PAYMENT_METHOD && contract.paymentConfirmed !== true;
+  };
+  const isDepositConfirmedContract = (contract: Partial<Contract> | null | undefined) => {
+    if (!contract || isRefundContract(contract) || isWithdrawnContract(contract)) return false;
+    const paymentMethod = normalizePaymentMethodForForm((contract as Partial<Contract> & { paymentMethod?: string | null }).paymentMethod);
+    const contractId = String(contract.id || "").trim();
+    return contract.paymentConfirmed === true || paymentMethod === "입금완료" || (!!contractId && linkedDepositByContractId.has(contractId));
   };
   const isRefundProductItem = (item: ProductItem | null | undefined) =>
     String(item?.adjustmentType || "").trim() === "refund" ||
@@ -1605,9 +1671,14 @@ export default function ContractsPage() {
   };
 
   const openContractDialog = (contractToOpen: Contract, mode: "edit" | "view") => {
-    setEditDialogMode(isRefundContract(contractToOpen) ? "view" : mode);
+    setEditDialogMode(isRefundContract(contractToOpen) || isWithdrawnContract(contractToOpen) ? "view" : mode);
     setEditingContractId(contractToOpen.id);
     const displayItems = getContractDisplayItems(contractToOpen);
+    const contractWithWithdrawal = contractToOpen as Contract & {
+      contractStatus?: string | null;
+      withdrawnAt?: Date | string | null;
+      withdrawnBy?: string | null;
+    };
     setFormData({
       contractNumber: contractToOpen.contractNumber,
       contractDate: new Date(contractToOpen.contractDate),
@@ -1634,6 +1705,9 @@ export default function ContractsPage() {
       renewalAlertDisabled: getRenewalDurationDays(displayItems) <= 1
         ? true
         : Boolean((contractToOpen as Contract & { renewalAlertDisabled?: boolean | null }).renewalAlertDisabled),
+      contractStatus: contractWithWithdrawal.contractStatus || null,
+      withdrawnAt: contractWithWithdrawal.withdrawnAt || null,
+      withdrawnBy: contractWithWithdrawal.withdrawnBy || null,
     });
 
     setProductItemNumericDrafts({});
@@ -1868,6 +1942,10 @@ export default function ContractsPage() {
       toast({ title: "환불 계약은 다시 환불할 수 없습니다.", variant: "destructive" });
       return;
     }
+    if (!isDepositConfirmedContract(contract)) {
+      toast({ title: "입금완료 계약만 환불할 수 있습니다.", variant: "destructive" });
+      return;
+    }
     const defaultQuantity = getItemQuantity(item);
     const defaultRefundDays = getEffectiveDays(item);
     setRefundContractId(contract.id);
@@ -1891,6 +1969,10 @@ export default function ContractsPage() {
     const contract = contracts.find(c => c.id === refundContractId);
     if (!contract) {
       toast({ title: "선택한 계약을 찾을 수 없습니다.", variant: "destructive" });
+      return;
+    }
+    if (!isDepositConfirmedContract(contract)) {
+      toast({ title: "입금완료 계약만 환불할 수 있습니다.", variant: "destructive" });
       return;
     }
     if (normalizedRefundAmount > refundTargetAmount) {
@@ -1945,9 +2027,40 @@ export default function ContractsPage() {
   };
 
   const handleDeleteSelected = () => {
+    if (!canDeleteContracts) {
+      toast({ title: "계약 삭제는 팀장 이상 권한만 가능합니다.", variant: "destructive" });
+      return;
+    }
+    if (selectedContractIds.length === 0) {
+      toast({ title: "삭제할 항목을 선택해주세요.", variant: "destructive" });
+      return;
+    }
+    if (!confirm(`선택한 ${selectedContractIds.length}개 계약을 삭제하시겠습니까?`)) return;
     selectedContractIds.forEach((id) => deleteMutation.mutate(id));
     setSelectedItems([]);
     setSelectedRowMap({});
+  };
+
+  const handleWithdrawSelected = () => {
+    if (!singleSelectedRow) {
+      toast({ title: "철회할 계약 1건을 선택해주세요.", variant: "destructive" });
+      return;
+    }
+    const targetContract = singleSelectedRow.contract;
+    if (isRefundContract(targetContract)) {
+      toast({ title: "환불 계약은 철회할 수 없습니다.", variant: "destructive" });
+      return;
+    }
+    if (isWithdrawnContract(targetContract)) {
+      toast({ title: "이미 철회된 계약입니다.", variant: "destructive" });
+      return;
+    }
+    if (!isDepositPendingContract(targetContract)) {
+      toast({ title: "입금예정 계약만 철회할 수 있습니다.", variant: "destructive" });
+      return;
+    }
+    if (!confirm("선택한 계약을 철회하시겠습니까? 철회 계약은 매출에서 제외됩니다.")) return;
+    withdrawMutation.mutate(targetContract.id);
   };
 
   const handleWorkCostOverrideOpen = () => {
@@ -2051,6 +2164,67 @@ export default function ContractsPage() {
     return (value ?? "").toString().trim();
   }
 
+  const parseSystemLogDetails = (details: string | null | undefined) => {
+    const parsed = new Map<string, string>();
+    String(details || "")
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .forEach((part) => {
+        const separatorIndex = part.indexOf("=");
+        if (separatorIndex <= 0) return;
+        const key = part.slice(0, separatorIndex).trim();
+        const value = part.slice(separatorIndex + 1).trim();
+        if (key) parsed.set(key, value);
+      });
+    return parsed;
+  };
+
+  const formatHistoryDateTime = (value: Date | string | null | undefined) => {
+    if (!value) return "-";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return String(value);
+    }
+    const hours = String(date.getHours()).padStart(2, "0");
+    const minutes = String(date.getMinutes()).padStart(2, "0");
+    return `${formatDate(date)} ${hours}:${minutes}`;
+  };
+
+  const getContractHistoryTitle = (log: SystemLog) => {
+    const details = parseSystemLogDetails(log.details);
+    if (details.has("withdrawnAt")) return "계약 철회";
+    if (details.has("refundContractId") || details.has("sourceContractId")) return "환불 등록";
+    if (log.actionType === "contract_update") return "계약 수정";
+    if (log.actionType === "contract_create") return "계약 등록";
+    if (log.actionType === "contract_delete") return "계약 삭제";
+    return normalizeText(log.action) || normalizeText(log.actionType) || "처리 기록";
+  };
+
+  const getContractHistorySummary = (log: SystemLog) => {
+    const details = parseSystemLogDetails(log.details);
+    const parts: string[] = [];
+    const fields = details.get("fields");
+    const amount = details.get("amount");
+    const withdrawnBy = details.get("withdrawnBy");
+
+    if (fields && fields !== "-") parts.push(`변경: ${fields}`);
+    if (amount) parts.push(`금액: ${formatCurrency(Number(amount) || 0)}`);
+    if (withdrawnBy) parts.push(`처리자: ${withdrawnBy}`);
+
+    return parts.join(" / ") || normalizeText(log.action) || normalizeText(log.details) || "-";
+  };
+
+  const currentContractHistoryLogs = useMemo(() => {
+    return [...contractHistoryLogs]
+      .sort((a, b) => {
+        const left = new Date(a.createdAt as Date | string).getTime();
+        const right = new Date(b.createdAt as Date | string).getTime();
+        return (Number.isFinite(right) ? right : 0) - (Number.isFinite(left) ? left : 0);
+      })
+      .slice(0, 10);
+  }, [contractHistoryLogs]);
+
   function normalizeCategoryLabel(value: string | null | undefined) {
     const text = normalizeText(value);
     const compact = text.replace(/\s+/g, "");
@@ -2064,6 +2238,9 @@ export default function ContractsPage() {
     const normalized = raw.replace(/\s+/g, "");
     const asciiKey = normalized.replace(/[_-]/g, "").toLowerCase();
     if (!normalized) return "";
+    if (raw === "철회" || ["withdraw", "withdrawn", "cancelled", "canceled"].includes(asciiKey)) {
+      return "철회";
+    }
     if (
       ["입금 예정", "입금예정", "입금 전", "입금전"].includes(raw) ||
       ["beforedeposit", "pendingdeposit", "beforepayment", "unpaid"].includes(asciiKey)
@@ -2093,6 +2270,7 @@ export default function ContractsPage() {
 
   function getPaymentMethodDisplayLabel(value: string | null | undefined, contract?: Contract) {
     if (isRefundContract(contract)) return "환불";
+    if (isWithdrawnContract(contract)) return "철회";
     return canonicalPaymentMethod(value);
   }
 
@@ -2328,6 +2506,12 @@ export default function ContractsPage() {
     return cost - workCost;
   };
 
+  const getContractRowClassName = (contract: Contract) => {
+    if (isWithdrawnContract(contract)) return "bg-amber-50/70 text-amber-950 hover:bg-amber-100/80";
+    if (isRefundContract(contract)) return "bg-red-50/70 text-red-950";
+    return "";
+  };
+
   const getContractMarginRate = (contract: Contract) => {
     if (isRefundContract(contract)) return 0;
     const cost = getContractSupplyAmount(contract);
@@ -2360,6 +2544,7 @@ export default function ContractsPage() {
     const normalized = canonicalPaymentMethod(paymentMethod);
     if (normalized === "입금완료") return "text-blue-600 font-medium";
     if (normalized === "입금예정") return "text-amber-600 font-medium";
+    if (normalized === "철회") return "text-amber-700 font-semibold";
     return "text-foreground";
   };
 
@@ -2424,26 +2609,18 @@ export default function ContractsPage() {
               data-testid="input-search"
             />
           </div>
-          <Button
-            variant="outline"
-            className="hidden h-10 rounded-none px-3 sm:inline-flex"
-            onClick={() => {
-              if (selectedContractIds.length === 0) {
-                toast({ title: "삭제할 항목을 선택해주세요.", variant: "destructive" });
-                return;
-              }
-                if (confirm(`선택한 ${selectedContractIds.length}개 계약을 삭제하시겠습니까?`)) {
-                  selectedContractIds.forEach((id) => deleteMutation.mutate(id));
-                  setSelectedItems([]);
-                  setSelectedRowMap({});
-                }
-              }}
-            disabled={selectedContractIds.length === 0}
-            data-testid="button-delete"
-          >
-            <Trash2 className="h-4 w-4 lg:mr-1" />
-            <span className="hidden lg:inline">삭제</span>
-          </Button>
+          {canDeleteContracts && (
+            <Button
+              variant="outline"
+              className="hidden h-10 rounded-none px-3 sm:inline-flex"
+              onClick={handleDeleteSelected}
+              disabled={selectedContractIds.length === 0 || deleteMutation.isPending}
+              data-testid="button-delete"
+            >
+              <Trash2 className="h-4 w-4 lg:mr-1" />
+              <span className="hidden lg:inline">삭제</span>
+            </Button>
+          )}
           <Button
             variant="outline"
             className="rounded-none"
@@ -2458,11 +2635,21 @@ export default function ContractsPage() {
             variant="outline"
             className="hidden h-10 rounded-none px-3 sm:inline-flex"
             onClick={handleRefundOpen}
-            disabled={!singleSelectedRow || isRefundContract(singleSelectedRow.contract)}
+            disabled={!singleSelectedRow || !isDepositConfirmedContract(singleSelectedRow.contract)}
             data-testid="button-refund"
           >
             <Undo2 className="w-4 h-4 mr-1" />
             환불
+          </Button>
+          <Button
+            variant="outline"
+            className="hidden h-10 rounded-none px-3 sm:inline-flex"
+            onClick={handleWithdrawSelected}
+            disabled={!singleSelectedRow || !isDepositPendingContract(singleSelectedRow.contract) || withdrawMutation.isPending}
+            data-testid="button-withdraw-contract"
+          >
+            <Ban className="w-4 h-4 mr-1" />
+            계약 철회
           </Button>
           <Button
             className="h-10 rounded-none bg-primary px-4 hover:bg-primary/90"
@@ -2753,8 +2940,8 @@ export default function ContractsPage() {
                   </div>
                 </div>
 
-                <div className="w-full">
-                  <div className="flex max-w-[820px] flex-col items-start gap-2">
+                <div className="grid w-full gap-3 lg:grid-cols-[640px_minmax(320px,1fr)]">
+                  <div className="flex flex-col items-start gap-2">
                     <div className="grid w-full gap-2 sm:grid-cols-2 md:grid-cols-[180px_180px]">
                       <div className="space-y-1">
                         <Label className="text-xs">결제확인</Label>
@@ -2945,6 +3132,20 @@ export default function ContractsPage() {
                     알림 활성화
                   </label>
                 </div>
+                {isWithdrawnContract(formData as Partial<Contract>) && (
+                  <div
+                    className="border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900"
+                    data-testid="text-contract-withdrawn-info"
+                  >
+                    계약 철회 시점:{" "}
+                    {(formData as Partial<InsertContract> & { withdrawnAt?: Date | string | null }).withdrawnAt
+                      ? formatDate((formData as Partial<InsertContract> & { withdrawnAt?: Date | string | null }).withdrawnAt as Date | string)
+                      : "-"}
+                    {(formData as Partial<InsertContract> & { withdrawnBy?: string | null }).withdrawnBy
+                      ? ` / 처리자: ${(formData as Partial<InsertContract> & { withdrawnBy?: string | null }).withdrawnBy}`
+                      : ""}
+                  </div>
+                )}
                 <div className="flex min-h-0 flex-col gap-1">
                   <Label className="text-sm font-medium">상품 정보</Label>
                 <div className="overflow-x-auto rounded-none border bg-white">
@@ -3126,9 +3327,8 @@ export default function ContractsPage() {
                   </div>
                 </div>
 
-                <div className="w-full">
-                  <div className="flex max-w-[820px] flex-col items-start gap-2">
-                    <div className="grid w-full gap-2 sm:grid-cols-2 md:grid-cols-[180px_180px]">
+                <div className="w-full space-y-2">
+                  <div className="grid w-full max-w-[640px] gap-2 sm:grid-cols-2 md:grid-cols-[180px_180px]">
                       <div className="space-y-1">
                         <Label className="text-xs">결제확인</Label>
                         <Select
@@ -3166,9 +3366,10 @@ export default function ContractsPage() {
                           </SelectContent>
                         </Select>
                       </div>
-                    </div>
+                  </div>
 
-                    <div className="w-full max-w-[640px] space-y-1">
+                  <div className="grid w-full gap-3 lg:grid-cols-[640px_minmax(320px,1fr)]">
+                    <div className="w-full space-y-1">
                       <Label className="text-xs">비고</Label>
                       <Textarea
                         rows={3}
@@ -3179,6 +3380,36 @@ export default function ContractsPage() {
                         data-testid="edit-input-notes"
                         disabled={isEditReadOnly}
                       />
+                    </div>
+
+                    <div className="min-h-[108px] rounded-none border bg-muted/10">
+                      <div className="flex h-8 items-center justify-between border-b px-3">
+                        <span className="text-xs font-semibold">수정 히스토리</span>
+                        <span className="text-[11px] text-muted-foreground">최근 {currentContractHistoryLogs.length}건</span>
+                      </div>
+                      <div className="max-h-[96px] overflow-y-auto px-3 py-2">
+                        {currentContractHistoryLogs.length > 0 ? (
+                          <div className="space-y-2">
+                            {currentContractHistoryLogs.map((log) => (
+                              <div key={log.id} className="border-b pb-2 last:border-b-0 last:pb-0" data-testid="contract-history-item">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <span className="text-xs font-medium">{getContractHistoryTitle(log)}</span>
+                                  <span className="text-[11px] text-muted-foreground">
+                                    {formatHistoryDateTime(log.createdAt as Date | string)}
+                                  </span>
+                                </div>
+                                <div className="mt-1 text-[11px] text-muted-foreground">
+                                  {log.userName || "-"} · {getContractHistorySummary(log)}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="flex h-[60px] items-center text-xs text-muted-foreground">
+                            아직 표시할 수정 기록이 없습니다.
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -3220,7 +3451,7 @@ export default function ContractsPage() {
           selectClassName="h-10 w-full rounded-none text-sm sm:h-8 sm:w-auto sm:min-w-[100px]"
           buttonTestId="button-date-filter"
           onReset={() => {
-            setStartDate(getKoreanStartOfMonth());
+            setStartDate(getKoreanStartOfYear());
             setEndDate(getKoreanEndOfDay());
             setManagerFilter("all");
             setCustomerFilter("all");
@@ -3297,7 +3528,7 @@ export default function ContractsPage() {
             setSortOption("contractDateDesc");
             setFocusedContractNumber("");
             setSearchQuery("");
-            setStartDate(getKoreanStartOfMonth());
+            setStartDate(getKoreanStartOfYear());
             setEndDate(getKoreanEndOfDay());
           }}
           data-testid="button-reset-filters"
@@ -3453,7 +3684,7 @@ export default function ContractsPage() {
                 contractRows.map(({ rowKey, contract, item, itemIndex }) => (
                   <TableRow
                     key={rowKey}
-                    className={`hover:bg-muted/20 cursor-pointer ${isRefundContract(contract) ? "bg-red-50/70 text-red-950" : ""}`}
+                    className={`cursor-pointer hover:bg-muted/20 ${getContractRowClassName(contract)}`}
                     data-testid={itemIndex === 0 ? `row-contract-${contract.id}` : `row-contract-${contract.id}-${itemIndex}`}
                     onClick={() => openContractDialog(contract, "edit")}
                   >
@@ -3492,7 +3723,14 @@ export default function ContractsPage() {
                       </span>
                     </TableCell>
                     <TableCell className="text-xs text-primary whitespace-nowrap align-top">
-                      {contract.customerName}
+                      <span className="inline-flex items-center gap-1.5">
+                        <span>{contract.customerName}</span>
+                        {isWithdrawnContract(contract) && (
+                          <Badge variant="outline" className="rounded-none border-amber-300 bg-amber-100 px-1.5 py-0 text-[10px] text-amber-800">
+                            철회
+                          </Badge>
+                        )}
+                      </span>
                     </TableCell>
                     <TableCell className="text-xs whitespace-nowrap">{item.userIdentifier || "-"}</TableCell>
                     <TableCell className="text-xs max-w-[190px] break-all">{item.productName || "-"}</TableCell>

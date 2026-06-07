@@ -464,6 +464,9 @@ var contracts = pgTable("contracts", {
   productDetailsJson: text("product_details_json"),
   renewalDueDate: timestamp("renewal_due_date"),
   renewalAlertDisabled: boolean("renewal_alert_disabled").notNull().default(false),
+  contractStatus: text("contract_status"),
+  withdrawnAt: timestamp("withdrawn_at"),
+  withdrawnBy: text("withdrawn_by"),
   contractType: text("contract_type"),
   sourceContractId: varchar("source_contract_id"),
   sourceItemId: text("source_item_id"),
@@ -662,7 +665,7 @@ var allPages = [
   { key: "payments", label: "\uB9E4\uCD9C\uAD00\uB9AC", path: "/payments" },
   { key: "refunds", label: "\uD658\uBD88\uAD00\uB9AC", path: "/refunds" },
   { key: "receivables", label: "\uBBF8\uC218\uAE08\uAD00\uB9AC", path: "/receivables" },
-  { key: "deposit_confirmations", label: "\uC785\uAE08\uC644\uB8CC", path: "/deposit-confirmations" },
+  { key: "deposit_confirmations", label: "\uC785\uAE08\uD655\uC778", path: "/deposit-confirmations" },
   { key: "notice", label: "\uACF5\uC9C0\uC0AC\uD56D", path: "/notice" },
   { key: "users", label: "\uC0AC\uC6A9\uC790\uAD00\uB9AC", path: "/settings/users" },
   { key: "system_logs", label: "\uC2DC\uC2A4\uD15C\uB85C\uADF8", path: "/settings/logs" },
@@ -1224,7 +1227,21 @@ var DatabaseStorage = class {
   }
   async getSystemLogs() {
     const results = await db.select().from(systemLogs).orderBy(desc(systemLogs.createdAt));
-    return results.map((row) => decryptPiiRow(row, SYSTEM_LOG_PII_FIELDS));
+    return results.map((row) => {
+      try {
+        return decryptPiiRow(row, SYSTEM_LOG_PII_FIELDS);
+      } catch (error) {
+        console.warn(`System log decrypt skipped: ${row.id}`, error instanceof Error ? error.message : error);
+        return {
+          ...row,
+          loginId: "",
+          userName: "\uBCF5\uD638\uD654 \uC2E4\uD328",
+          ipAddress: "",
+          userAgent: "",
+          details: null
+        };
+      }
+    });
   }
   async createSystemLog(log2) {
     const [created] = await db.insert(systemLogs).values(encryptPiiRow(log2, SYSTEM_LOG_PII_FIELDS)).returning();
@@ -2693,6 +2710,9 @@ async function ensureContractColumns() {
     ADD COLUMN IF NOT EXISTS deposit_bank text,
     ADD COLUMN IF NOT EXISTS renewal_due_date timestamp,
     ADD COLUMN IF NOT EXISTS renewal_alert_disabled boolean NOT NULL DEFAULT false,
+    ADD COLUMN IF NOT EXISTS contract_status text,
+    ADD COLUMN IF NOT EXISTS withdrawn_at timestamp,
+    ADD COLUMN IF NOT EXISTS withdrawn_by text,
     ADD COLUMN IF NOT EXISTS contract_type text,
     ADD COLUMN IF NOT EXISTS source_contract_id varchar,
     ADD COLUMN IF NOT EXISTS source_item_id text
@@ -3401,13 +3421,14 @@ function getDepositMatchContractAmount(contract) {
   return baseAmount;
 }
 function buildPaymentPayloadFromContract(contract) {
+  const withdrawn = isWithdrawnContract(contract);
   return {
     contractId: contract.id,
     depositDate: contract.contractDate,
     customerName: contract.customerName,
     manager: contract.managerName,
-    amount: contract.cost,
-    depositConfirmed: contract.paymentConfirmed || false,
+    amount: withdrawn ? 0 : contract.cost,
+    depositConfirmed: withdrawn ? false : contract.paymentConfirmed || false,
     paymentMethod: contract.paymentMethod || null,
     invoiceIssued: parseInvoiceIssuedFlag(contract.invoiceIssued) === true,
     notes: contract.notes || null
@@ -3419,9 +3440,11 @@ function vatTypeFromInvoiceIssued(value) {
   return issued ? "\uBD80\uAC00\uC138\uD3EC\uD568" : "\uBD80\uAC00\uC138\uBCC4\uB3C4";
 }
 var PAYMENT_METHOD_BEFORE_DEPOSIT = "\uC785\uAE08\uC608\uC815";
+var PAYMENT_METHOD_WITHDRAWN = "\uCCA0\uD68C";
 var PAYMENT_METHOD_REFUND_REQUEST = "\uD658\uBD88\uC694\uCCAD";
 var PAYMENT_METHOD_DEPOSIT_CONFIRMED = "\uC785\uAE08\uC644\uB8CC";
 var PAYMENT_METHOD_OTHER = "\uAE30\uD0C0";
+var CONTRACT_STATUS_WITHDRAWN = "withdrawn";
 var REFUND_STATUS_PENDING = "\uD658\uBD88\uB300\uAE30";
 var REFUND_STATUS_REQUESTED = "\uD658\uBD88\uC694\uCCAD";
 var REFUND_STATUS_COMPLETED = "\uD658\uBD88\uC644\uB8CC";
@@ -3429,11 +3452,20 @@ var REFUND_STATUS_OFFSET = "\uC0C1\uACC4\uCC98\uB9AC";
 var CONTRACT_TYPE_REFUND = "refund";
 var CONTRACT_DEPOSIT_BANK_DEFAULT = "\uAD6D\uBBFC\uC740\uD589";
 var FINANCIAL_OVERRIDE_PAYMENT_METHODS = /* @__PURE__ */ new Set();
+function isWithdrawnContract(contract) {
+  return String(contract?.contractStatus || "").trim().toLowerCase() === CONTRACT_STATUS_WITHDRAWN;
+}
+function isTeamLeadOrHigherRole(role) {
+  return (/* @__PURE__ */ new Set(["\uD300\uC7A5", "\uC2E4\uC7A5", "\uC774\uC0AC", "\uB300\uD45C", "\uB300\uD45C\uC774\uC0AC", "\uCD1D\uAD04\uC774\uC0AC", "\uAC1C\uBC1C\uC790"])).has(String(role || "").trim());
+}
 function normalizeContractPaymentMethod(value) {
   const raw = String(value ?? "").trim();
   const normalized = raw.replace(/\s+/g, "");
   const asciiKey = normalized.replace(/[_-]/g, "").toLowerCase();
   if (!normalized) return PAYMENT_METHOD_BEFORE_DEPOSIT;
+  if (normalized === PAYMENT_METHOD_WITHDRAWN || ["withdraw", "withdrawn", "cancelled", "canceled"].includes(asciiKey)) {
+    return PAYMENT_METHOD_WITHDRAWN;
+  }
   if (normalized === PAYMENT_METHOD_BEFORE_DEPOSIT || normalized === "\uC785\uAE08\uC804" || ["beforedeposit", "pendingdeposit", "beforepayment", "unpaid"].includes(asciiKey)) {
     return PAYMENT_METHOD_BEFORE_DEPOSIT;
   }
@@ -3469,6 +3501,7 @@ function normalizeContractDepositBank(value, fallbackPaymentMethod) {
   return normalized ? "\uAE30\uD0C0" : CONTRACT_DEPOSIT_BANK_DEFAULT;
 }
 function shouldAutoMapDepositConfirmation(contract) {
+  if (isWithdrawnContract(contract)) return false;
   if (String(contract.contractType || "").trim() === CONTRACT_TYPE_REFUND) return false;
   if ((Number(contract.cost) || 0) <= 0) return false;
   return normalizeContractPaymentMethod(contract.paymentMethod) === PAYMENT_METHOD_DEPOSIT_CONFIRMED || contract.paymentConfirmed === true;
@@ -3754,6 +3787,7 @@ function getEffectiveSalesAmount(contract) {
   return toAmount(contract?.cost) - getKeepDeductionAmount(contract);
 }
 function getGrossSalesAmount(contract) {
+  if (isWithdrawnContract(contract)) return 0;
   return toAmount(contract?.cost) + Math.max(0, toAmount(contract?.totalRefund));
 }
 var SLOT_PRODUCT_ALIAS_KEYS = new Set(
@@ -4560,7 +4594,7 @@ async function registerRoutes(httpServer2, app2) {
   app2.get("/api/stats", async (_req, res) => {
     try {
       const stats = await storage.getStats();
-      const contracts2 = await storage.getContractsWithFinancials();
+      const contracts2 = (await storage.getContractsWithFinancials()).filter((contract) => !isWithdrawnContract(contract));
       const users2 = await storage.getUsers();
       const activities2 = await storage.getActivities();
       const totalSales = contracts2.reduce((sum, c) => sum + getEffectiveSalesAmount(c), 0);
@@ -4655,7 +4689,7 @@ async function registerRoutes(httpServer2, app2) {
       }
       const startDateValue = toSingleString(req.query.startDate);
       const endDateValue = toSingleString(req.query.endDate);
-      const contracts2 = await storage.getContractsWithFinancials();
+      const contracts2 = (await storage.getContractsWithFinancials()).filter((contract) => !isWithdrawnContract(contract));
       const activities2 = await storage.getActivities();
       const hasFullDashboardAccess = PERMISSION_ADMIN_ROLES.includes(currentUser.role || "");
       const currentUserNameKey = normalizeText(currentUser.name);
@@ -6283,6 +6317,33 @@ async function registerRoutes(httpServer2, app2) {
       res.status(500).json({ error: "Failed to bulk mark contracts as deposit confirmed" });
     }
   });
+  app2.get("/api/contracts/:id/history", async (req, res) => {
+    try {
+      const currentUser = req.session.userId ? await storage.getUser(req.session.userId) : null;
+      if (isCounselorPosition(currentUser?.role)) {
+        return res.status(403).json({ error: "\uACC4\uC57D \uC774\uB825\uC744 \uC870\uD68C\uD560 \uAD8C\uD55C\uC774 \uC5C6\uC2B5\uB2C8\uB2E4." });
+      }
+      const contractId = toSingleString(req.params.id).trim();
+      if (!contractId) {
+        return res.status(400).json({ error: "Contract id is required." });
+      }
+      const logs = await storage.getSystemLogs();
+      const detailNeedles = [
+        `contractId=${contractId}`,
+        `sourceContractId=${contractId}`,
+        `refundContractId=${contractId}`
+      ];
+      const history = logs.filter((log2) => detailNeedles.some((needle) => String(log2.details || "").includes(needle))).sort((a, b) => {
+        const left = new Date(a.createdAt).getTime();
+        const right = new Date(b.createdAt).getTime();
+        return (Number.isFinite(right) ? right : 0) - (Number.isFinite(left) ? left : 0);
+      }).slice(0, 30);
+      res.json(history);
+    } catch (error) {
+      console.error("Error fetching contract history:", error);
+      res.status(500).json({ error: "Failed to fetch contract history" });
+    }
+  });
   app2.get("/api/contracts/:id/refund-contracts", async (req, res) => {
     try {
       const contractId = toSingleString(req.params.id).trim();
@@ -6316,6 +6377,11 @@ async function registerRoutes(httpServer2, app2) {
       }
       if (contract.contractType === CONTRACT_TYPE_REFUND) {
         return res.status(400).json({ error: "Refund contracts cannot be refunded again." });
+      }
+      const depositMatched = await hasContractDepositMatch(contract.id);
+      const paymentConfirmed = contract.paymentConfirmed === true || normalizeContractPaymentMethod(contract.paymentMethod) === PAYMENT_METHOD_DEPOSIT_CONFIRMED;
+      if (!depositMatched && !paymentConfirmed) {
+        return res.status(409).json({ error: "\uC785\uAE08\uC644\uB8CC \uACC4\uC57D\uB9CC \uD658\uBD88\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4." });
       }
       const targetAmount = Math.max(0, Number(parsed.targetAmount) || 0);
       const effectiveTargetAmount = targetAmount > 0 ? targetAmount : Math.max(0, Number(contract.cost) || 0);
@@ -6524,6 +6590,10 @@ async function registerRoutes(httpServer2, app2) {
   });
   app2.delete("/api/contracts/:id", async (req, res) => {
     try {
+      const currentUser = req.session.userId ? await storage.getUser(req.session.userId) : null;
+      if (!currentUser || !isTeamLeadOrHigherRole(currentUser.role)) {
+        return res.status(403).json({ error: "\uACC4\uC57D \uC0AD\uC81C\uB294 \uD300\uC7A5 \uC774\uC0C1 \uAD8C\uD55C\uB9CC \uAC00\uB2A5\uD569\uB2C8\uB2E4." });
+      }
       const contractId = toSingleString(req.params.id);
       const contract = await storage.getContract(contractId);
       if (!contract) {
@@ -6556,6 +6626,54 @@ async function registerRoutes(httpServer2, app2) {
     } catch (error) {
       console.error("Error deleting contract:", error);
       res.status(500).json({ error: "Failed to delete contract" });
+    }
+  });
+  app2.post("/api/contracts/:id/withdraw", async (req, res) => {
+    try {
+      const contractId = toSingleString(req.params.id);
+      const contract = await storage.getContract(contractId);
+      if (!contract) {
+        return res.status(404).json({ error: "Contract not found" });
+      }
+      if (contract.contractType === CONTRACT_TYPE_REFUND) {
+        return res.status(409).json({ error: "\uD658\uBD88 \uACC4\uC57D\uC740 \uACC4\uC57D \uCCA0\uD68C\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4." });
+      }
+      if (isWithdrawnContract(contract)) {
+        return res.status(409).json({ error: "\uC774\uBBF8 \uCCA0\uD68C\uB41C \uACC4\uC57D\uC785\uB2C8\uB2E4." });
+      }
+      const depositMatched = await hasContractDepositMatch(contractId);
+      const paymentMethod = normalizeContractPaymentMethod(contract.paymentMethod);
+      if (depositMatched || contract.paymentConfirmed === true || paymentMethod !== PAYMENT_METHOD_BEFORE_DEPOSIT) {
+        return res.status(409).json({ error: "\uC785\uAE08\uC608\uC815 \uACC4\uC57D\uB9CC \uCCA0\uD68C\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4." });
+      }
+      const currentUser = req.session.userId ? await storage.getUser(req.session.userId) : null;
+      const withdrawnAt = /* @__PURE__ */ new Date();
+      const withdrawnBy = currentUser?.name || "system";
+      const updatedContract = await db.transaction(async (tx) => {
+        const [updated] = await tx.update(contracts).set({
+          contractStatus: CONTRACT_STATUS_WITHDRAWN,
+          withdrawnAt,
+          withdrawnBy,
+          paymentConfirmed: false,
+          paymentMethod: PAYMENT_METHOD_WITHDRAWN
+        }).where(eq2(contracts.id, contractId)).returning();
+        await tx.update(payments).set({
+          amount: 0,
+          depositConfirmed: false,
+          paymentMethod: PAYMENT_METHOD_WITHDRAWN,
+          notes: contract.notes || null
+        }).where(eq2(payments.contractId, contractId));
+        return updated;
+      });
+      await writeSystemLog(req, {
+        actionType: "contract_update",
+        action: `\uACC4\uC57D \uCCA0\uD68C: ${contract.contractNumber || contractId}`,
+        details: `contractId=${contractId}, withdrawnAt=${withdrawnAt.toISOString()}, withdrawnBy=${withdrawnBy}`
+      });
+      res.json(updatedContract);
+    } catch (error) {
+      console.error("Error withdrawing contract:", error);
+      res.status(500).json({ error: "Failed to withdraw contract" });
     }
   });
   app2.get("/api/contracts-with-financials", async (req, res) => {
@@ -6637,6 +6755,11 @@ async function registerRoutes(httpServer2, app2) {
       const contract = await storage.getContract(parsed.contractId);
       if (!contract) {
         return res.status(404).json({ error: "Contract not found." });
+      }
+      const depositMatched = await hasContractDepositMatch(contract.id);
+      const paymentConfirmed = contract.paymentConfirmed === true || normalizeContractPaymentMethod(contract.paymentMethod) === PAYMENT_METHOD_DEPOSIT_CONFIRMED;
+      if (!depositMatched && !paymentConfirmed) {
+        return res.status(409).json({ error: "\uC785\uAE08\uC644\uB8CC \uACC4\uC57D\uB9CC \uD658\uBD88\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4." });
       }
       const targetAmount = Math.max(0, Number(parsed.targetAmount) || 0);
       const effectiveTargetAmount = targetAmount > 0 ? targetAmount : Math.max(0, Number(contract.cost) || 0);
@@ -7277,7 +7400,7 @@ async function registerRoutes(httpServer2, app2) {
         )
       );
       const canApplyDepartmentSplit = regionalProductIdSet.size > 0 || hasTeamUsers && hasManagerMapping;
-      let filtered = contracts2;
+      let filtered = contracts2.filter((contract) => !isWithdrawnContract(contract));
       if (isManager) {
         filtered = filtered.filter((contract) => isOwnManagedRecord(currentUser, contract));
       } else if (!isExecutive) {
@@ -7525,7 +7648,7 @@ async function registerRoutes(httpServer2, app2) {
           const sameTeamIds2 = new Set(sameTeamUsers2.map((user) => String(user.id)));
           const sameTeamNames2 = new Set(sameTeamUsers2.map((user) => normalizeText(user.name)).filter(Boolean));
           const teamContracts = contracts2.filter(
-            (contract) => contract.managerId && sameTeamIds2.has(String(contract.managerId)) || normalizeText(contract.managerName) && sameTeamNames2.has(normalizeText(contract.managerName))
+            (contract) => !isWithdrawnContract(contract) && (contract.managerId && sameTeamIds2.has(String(contract.managerId)) || normalizeText(contract.managerName) && sameTeamNames2.has(normalizeText(contract.managerName)))
           );
           const teamCustomerIds = new Set(teamContracts.map((contract) => contract.customerId).filter(Boolean));
           filteredDeals = filteredDeals.filter((deal) => deal.customerId && teamCustomerIds.has(deal.customerId));

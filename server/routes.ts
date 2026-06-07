@@ -541,6 +541,9 @@ async function ensureContractColumns() {
     ADD COLUMN IF NOT EXISTS deposit_bank text,
     ADD COLUMN IF NOT EXISTS renewal_due_date timestamp,
     ADD COLUMN IF NOT EXISTS renewal_alert_disabled boolean NOT NULL DEFAULT false,
+    ADD COLUMN IF NOT EXISTS contract_status text,
+    ADD COLUMN IF NOT EXISTS withdrawn_at timestamp,
+    ADD COLUMN IF NOT EXISTS withdrawn_by text,
     ADD COLUMN IF NOT EXISTS contract_type text,
     ADD COLUMN IF NOT EXISTS source_contract_id varchar,
     ADD COLUMN IF NOT EXISTS source_item_id text
@@ -1577,14 +1580,16 @@ function buildPaymentPayloadFromContract(contract: {
   paymentMethod: string | null;
   invoiceIssued: string | null;
   notes: string | null;
+  contractStatus?: string | null;
 }) {
+  const withdrawn = isWithdrawnContract(contract);
   return {
     contractId: contract.id,
     depositDate: contract.contractDate,
     customerName: contract.customerName,
     manager: contract.managerName,
-    amount: contract.cost,
-    depositConfirmed: contract.paymentConfirmed || false,
+    amount: withdrawn ? 0 : contract.cost,
+    depositConfirmed: withdrawn ? false : contract.paymentConfirmed || false,
     paymentMethod: contract.paymentMethod || null,
     invoiceIssued: parseInvoiceIssuedFlag(contract.invoiceIssued) === true,
     notes: contract.notes || null,
@@ -1598,9 +1603,11 @@ function vatTypeFromInvoiceIssued(value: string | null | undefined): "부가세�
 }
 
 const PAYMENT_METHOD_BEFORE_DEPOSIT = "입금예정";
+const PAYMENT_METHOD_WITHDRAWN = "철회";
 const PAYMENT_METHOD_REFUND_REQUEST = "환불요청";
 const PAYMENT_METHOD_DEPOSIT_CONFIRMED = "입금완료";
 const PAYMENT_METHOD_OTHER = "기타";
+const CONTRACT_STATUS_WITHDRAWN = "withdrawn";
 const REFUND_STATUS_PENDING = "환불대기";
 const REFUND_STATUS_REQUESTED = "환불요청";
 const REFUND_STATUS_COMPLETED = "환불완료";
@@ -1609,12 +1616,23 @@ const CONTRACT_TYPE_REFUND = "refund";
 const CONTRACT_DEPOSIT_BANK_DEFAULT = "국민은행";
 const FINANCIAL_OVERRIDE_PAYMENT_METHODS = new Set<string>();
 
+function isWithdrawnContract(contract: { contractStatus?: string | null } | null | undefined): boolean {
+  return String(contract?.contractStatus || "").trim().toLowerCase() === CONTRACT_STATUS_WITHDRAWN;
+}
+
+function isTeamLeadOrHigherRole(role?: string | null): boolean {
+  return new Set(["팀장", "실장", "이사", "대표", "대표이사", "총괄이사", "개발자"]).has(String(role || "").trim());
+}
+
 function normalizeContractPaymentMethod(value: unknown): string {
   const raw = String(value ?? "").trim();
   const normalized = raw.replace(/\s+/g, "");
   const asciiKey = normalized.replace(/[_-]/g, "").toLowerCase();
 
   if (!normalized) return PAYMENT_METHOD_BEFORE_DEPOSIT;
+  if (normalized === PAYMENT_METHOD_WITHDRAWN || ["withdraw", "withdrawn", "cancelled", "canceled"].includes(asciiKey)) {
+    return PAYMENT_METHOD_WITHDRAWN;
+  }
   if (
     normalized === PAYMENT_METHOD_BEFORE_DEPOSIT ||
     normalized === "입금전" ||
@@ -1686,7 +1704,8 @@ function normalizeContractDepositBank(value: unknown, fallbackPaymentMethod?: un
   return normalized ? "기타" : CONTRACT_DEPOSIT_BANK_DEFAULT;
 }
 
-function shouldAutoMapDepositConfirmation(contract: Pick<Contract, "cost" | "contractType" | "paymentMethod" | "paymentConfirmed">): boolean {
+function shouldAutoMapDepositConfirmation(contract: Pick<Contract, "cost" | "contractType" | "contractStatus" | "paymentMethod" | "paymentConfirmed">): boolean {
+  if (isWithdrawnContract(contract)) return false;
   if (String(contract.contractType || "").trim() === CONTRACT_TYPE_REFUND) return false;
   if ((Number(contract.cost) || 0) <= 0) return false;
   return normalizeContractPaymentMethod(contract.paymentMethod) === PAYMENT_METHOD_DEPOSIT_CONFIRMED || contract.paymentConfirmed === true;
@@ -2089,7 +2108,8 @@ function getEffectiveSalesAmount(contract: { cost?: number | null; totalKeep?: n
   return toAmount(contract?.cost) - getKeepDeductionAmount(contract);
 }
 
-function getGrossSalesAmount(contract: { cost?: number | null; totalRefund?: number | null }): number {
+function getGrossSalesAmount(contract: { cost?: number | null; totalRefund?: number | null; contractStatus?: string | null }): number {
+  if (isWithdrawnContract(contract)) return 0;
   return toAmount(contract?.cost) + Math.max(0, toAmount(contract?.totalRefund));
 }
 
@@ -3445,7 +3465,7 @@ export async function registerRoutes(
   app.get("/api/stats", async (_req, res) => {
     try {
       const stats = await storage.getStats();
-      const contracts = await storage.getContractsWithFinancials();
+      const contracts = (await storage.getContractsWithFinancials()).filter((contract) => !isWithdrawnContract(contract));
       const users = await storage.getUsers();
       const activities = await storage.getActivities();
 
@@ -3557,7 +3577,7 @@ export async function registerRoutes(
       }
       const startDateValue = toSingleString(req.query.startDate as string | string[] | undefined);
       const endDateValue = toSingleString(req.query.endDate as string | string[] | undefined);
-      const contracts = await storage.getContractsWithFinancials();
+      const contracts = (await storage.getContractsWithFinancials()).filter((contract) => !isWithdrawnContract(contract));
       const activities = await storage.getActivities();
 
       // Dashboard policy:
@@ -5401,6 +5421,41 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/contracts/:id/history", async (req, res) => {
+    try {
+      const currentUser = req.session.userId ? await storage.getUser(req.session.userId) : null;
+      if (isCounselorPosition(currentUser?.role)) {
+        return res.status(403).json({ error: "계약 이력을 조회할 권한이 없습니다." });
+      }
+
+      const contractId = toSingleString(req.params.id).trim();
+      if (!contractId) {
+        return res.status(400).json({ error: "Contract id is required." });
+      }
+
+      const logs = await storage.getSystemLogs();
+      const detailNeedles = [
+        `contractId=${contractId}`,
+        `sourceContractId=${contractId}`,
+        `refundContractId=${contractId}`,
+      ];
+
+      const history = logs
+        .filter((log) => detailNeedles.some((needle) => String(log.details || "").includes(needle)))
+        .sort((a, b) => {
+          const left = new Date(a.createdAt as Date | string).getTime();
+          const right = new Date(b.createdAt as Date | string).getTime();
+          return (Number.isFinite(right) ? right : 0) - (Number.isFinite(left) ? left : 0);
+        })
+        .slice(0, 30);
+
+      res.json(history);
+    } catch (error) {
+      console.error("Error fetching contract history:", error);
+      res.status(500).json({ error: "Failed to fetch contract history" });
+    }
+  });
+
   app.get("/api/contracts/:id/refund-contracts", async (req, res) => {
     try {
       const contractId = toSingleString(req.params.id).trim();
@@ -5437,6 +5492,13 @@ export async function registerRoutes(
       }
       if (contract.contractType === CONTRACT_TYPE_REFUND) {
         return res.status(400).json({ error: "Refund contracts cannot be refunded again." });
+      }
+      const depositMatched = await hasContractDepositMatch(contract.id);
+      const paymentConfirmed =
+        contract.paymentConfirmed === true ||
+        normalizeContractPaymentMethod(contract.paymentMethod) === PAYMENT_METHOD_DEPOSIT_CONFIRMED;
+      if (!depositMatched && !paymentConfirmed) {
+        return res.status(409).json({ error: "입금완료 계약만 환불할 수 있습니다." });
       }
 
       const targetAmount = Math.max(0, Number(parsed.targetAmount) || 0);
@@ -5677,6 +5739,11 @@ export async function registerRoutes(
 
   app.delete("/api/contracts/:id", async (req, res) => {
     try {
+      const currentUser = req.session.userId ? await storage.getUser(req.session.userId) : null;
+      if (!currentUser || !isTeamLeadOrHigherRole(currentUser.role)) {
+        return res.status(403).json({ error: "계약 삭제는 팀장 이상 권한만 가능합니다." });
+      }
+
       const contractId = toSingleString(req.params.id);
       const contract = await storage.getContract(contractId);
       if (!contract) {
@@ -5715,6 +5782,65 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error deleting contract:", error);
       res.status(500).json({ error: "Failed to delete contract" });
+    }
+  });
+
+  app.post("/api/contracts/:id/withdraw", async (req, res) => {
+    try {
+      const contractId = toSingleString(req.params.id);
+      const contract = await storage.getContract(contractId);
+      if (!contract) {
+        return res.status(404).json({ error: "Contract not found" });
+      }
+      if (contract.contractType === CONTRACT_TYPE_REFUND) {
+        return res.status(409).json({ error: "환불 계약은 계약 철회할 수 없습니다." });
+      }
+      if (isWithdrawnContract(contract)) {
+        return res.status(409).json({ error: "이미 철회된 계약입니다." });
+      }
+
+      const depositMatched = await hasContractDepositMatch(contractId);
+      const paymentMethod = normalizeContractPaymentMethod(contract.paymentMethod);
+      if (depositMatched || contract.paymentConfirmed === true || paymentMethod !== PAYMENT_METHOD_BEFORE_DEPOSIT) {
+        return res.status(409).json({ error: "입금예정 계약만 철회할 수 있습니다." });
+      }
+
+      const currentUser = req.session.userId ? await storage.getUser(req.session.userId) : null;
+      const withdrawnAt = new Date();
+      const withdrawnBy = currentUser?.name || "system";
+      const updatedContract = await db.transaction(async (tx) => {
+        const [updated] = await tx
+          .update(contracts)
+          .set({
+            contractStatus: CONTRACT_STATUS_WITHDRAWN,
+            withdrawnAt,
+            withdrawnBy,
+            paymentConfirmed: false,
+            paymentMethod: PAYMENT_METHOD_WITHDRAWN,
+          })
+          .where(eq(contracts.id, contractId))
+          .returning();
+
+        await tx.update(payments).set({
+          amount: 0,
+          depositConfirmed: false,
+          paymentMethod: PAYMENT_METHOD_WITHDRAWN,
+          notes: contract.notes || null,
+        }).where(eq(payments.contractId, contractId));
+
+        return updated;
+      });
+
+      await writeSystemLog(req, {
+        actionType: "contract_update",
+        action: `계약 철회: ${contract.contractNumber || contractId}`,
+        details: `contractId=${contractId}, withdrawnAt=${withdrawnAt.toISOString()}, withdrawnBy=${withdrawnBy}`,
+      });
+
+      res.json(updatedContract);
+    } catch (error) {
+      console.error("Error withdrawing contract:", error);
+      res.status(500).json({ error: "Failed to withdraw contract" });
     }
   });
 
@@ -5808,6 +5934,13 @@ export async function registerRoutes(
       const contract = await storage.getContract(parsed.contractId);
       if (!contract) {
         return res.status(404).json({ error: "Contract not found." });
+      }
+      const depositMatched = await hasContractDepositMatch(contract.id);
+      const paymentConfirmed =
+        contract.paymentConfirmed === true ||
+        normalizeContractPaymentMethod(contract.paymentMethod) === PAYMENT_METHOD_DEPOSIT_CONFIRMED;
+      if (!depositMatched && !paymentConfirmed) {
+        return res.status(409).json({ error: "입금완료 계약만 환불할 수 있습니다." });
       }
       const targetAmount = Math.max(0, Number(parsed.targetAmount) || 0);
       const effectiveTargetAmount = targetAmount > 0 ? targetAmount : Math.max(0, Number(contract.cost) || 0);
@@ -6587,7 +6720,7 @@ export async function registerRoutes(
       );
       const canApplyDepartmentSplit = regionalProductIdSet.size > 0 || (hasTeamUsers && hasManagerMapping);
 
-      let filtered = contracts;
+      let filtered = contracts.filter((contract) => !isWithdrawnContract(contract));
 
       if (isManager) {
         filtered = filtered.filter((contract) => isOwnManagedRecord(currentUser, contract));
@@ -6879,8 +7012,11 @@ export async function registerRoutes(
           const sameTeamIds2 = new Set(sameTeamUsers2.map((user) => String(user.id)));
           const sameTeamNames2 = new Set(sameTeamUsers2.map((user) => normalizeText(user.name)).filter(Boolean));
           const teamContracts = contracts.filter((contract) =>
-            (contract.managerId && sameTeamIds2.has(String(contract.managerId))) ||
-            (normalizeText(contract.managerName) && sameTeamNames2.has(normalizeText(contract.managerName)))
+            !isWithdrawnContract(contract) &&
+            (
+              (contract.managerId && sameTeamIds2.has(String(contract.managerId))) ||
+              (normalizeText(contract.managerName) && sameTeamNames2.has(normalizeText(contract.managerName)))
+            )
           );
           const teamCustomerIds = new Set(teamContracts.map((contract) => contract.customerId).filter(Boolean));
           filteredDeals = filteredDeals.filter((deal) => deal.customerId && teamCustomerIds.has(deal.customerId));

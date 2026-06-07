@@ -30,7 +30,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { getKoreanDateKey, getKoreanEndOfDay, getKoreanStartOfMonth } from "@/lib/korean-time";
+import { getKoreanDateKey, getKoreanEndOfDay, getKoreanStartOfMonth, getKoreanStartOfYear } from "@/lib/korean-time";
 import { useSettings } from "@/lib/settings";
 import { formatCeilAmount } from "@/lib/utils";
 
@@ -72,6 +72,9 @@ const getDisplayedNetAmount = (row: PaymentRow) => Math.max(0, row.totalAmount -
 const isRefundContract = (contract: ContractWithFinancials) =>
   normalizeText((contract as ContractWithFinancials & { contractType?: string | null }).contractType).toLowerCase() === "refund" ||
   Number(contract.cost) < 0;
+
+const isWithdrawnContract = (contract: ContractWithFinancials) =>
+  normalizeText((contract as ContractWithFinancials & { contractStatus?: string | null }).contractStatus).toLowerCase() === "withdrawn";
 
 const isExecutionPaymentConfirmed = (status: unknown) => {
   const normalized = normalizeText(status).replace(/\s+/g, "");
@@ -462,7 +465,7 @@ export default function PaymentsContentPage() {
       refundRowsByContract.set(refund.contractId, current);
     });
 
-    return contractsData.map((contract) => {
+    return contractsData.filter((contract) => !isWithdrawnContract(contract)).map((contract) => {
       const items = parseStoredProductItems(contract, products, productRateHistories);
       const summaryItem = createContractSummaryItem(contract, items);
       const contractRefund = refundRowsByContract.get(contract.id);
@@ -774,7 +777,7 @@ export default function PaymentsContentPage() {
           onEndDateChange={setEndDate}
           onReset={() => {
             setSearchQuery("");
-            setStartDate(getKoreanStartOfMonth());
+            setStartDate(getKoreanStartOfYear());
             setEndDate(getKoreanEndOfDay());
             setPaymentFilter("all");
             setWorkerFilter("all");
@@ -823,7 +826,7 @@ export default function PaymentsContentPage() {
           className="ml-auto text-muted-foreground rounded-none"
           onClick={() => {
             setSearchQuery("");
-            setStartDate(getKoreanStartOfMonth());
+            setStartDate(getKoreanStartOfYear());
             setEndDate(getKoreanEndOfDay());
             setPaymentFilter("all");
             setWorkerFilter("all");

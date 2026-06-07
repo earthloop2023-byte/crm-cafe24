@@ -16,7 +16,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { format } from "date-fns";
 import type { Deposit, Contract, RefundWithContract } from "@shared/schema";
-import { getKoreanStartOfMonth, getKoreanEndOfDay, isWithinKoreanDateRange } from "@/lib/korean-time";
+import { getKoreanStartOfMonth, getKoreanStartOfYear, getKoreanEndOfDay, isWithinKoreanDateRange } from "@/lib/korean-time";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useSettings } from "@/lib/settings";
 import { useToast } from "@/hooks/use-toast";
@@ -879,7 +879,7 @@ export default function DepositConfirmationsPage() {
           onEndDateChange={setEndDate}
           onReset={() => {
             setSearchQuery("");
-            setStartDate(getKoreanStartOfMonth());
+            setStartDate(getKoreanStartOfYear());
             setEndDate(getKoreanEndOfDay());
             setStatusFilter("all");
             setCurrentPage(1);
@@ -901,7 +901,7 @@ export default function DepositConfirmationsPage() {
           className="ml-auto text-muted-foreground rounded-none"
           onClick={() => {
             setSearchQuery("");
-            setStartDate(getKoreanStartOfMonth());
+            setStartDate(getKoreanStartOfYear());
             setEndDate(getKoreanEndOfDay());
             setStatusFilter("all");
             setCurrentPage(1);

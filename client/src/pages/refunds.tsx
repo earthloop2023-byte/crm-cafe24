@@ -11,7 +11,7 @@ import { Pagination } from "@/components/pagination";
 import { format } from "date-fns";
 import * as XLSX from "xlsx";
 import type { Contract } from "@shared/schema";
-import { getKoreanEndOfDay, getKoreanStartOfMonth, isWithinKoreanDateRange } from "@/lib/korean-time";
+import { getKoreanEndOfDay, getKoreanStartOfMonth, getKoreanStartOfYear, isWithinKoreanDateRange } from "@/lib/korean-time";
 import { useSettings } from "@/lib/settings";
 import { formatCeilAmount } from "@/lib/utils";
 import { matchesKoreanSearch } from "@shared/korean-search";
@@ -186,7 +186,7 @@ export default function RefundsPage() {
     setCustomerFilter("all");
     setSourceFilter("all");
     setRefundStatusFilter("all");
-    setStartDate(getKoreanStartOfMonth());
+    setStartDate(getKoreanStartOfYear());
     setEndDate(getKoreanEndOfDay());
     setCurrentPage(1);
   };

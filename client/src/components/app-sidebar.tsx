@@ -68,7 +68,7 @@ const menuItems: MenuItem[] = [
       { title: "\uB9E4\uCD9C\uAD00\uB9AC", url: "/payments" },
       { title: "\uD658\uBD88\uAD00\uB9AC", url: "/refunds" },
       { title: "\uBBF8\uC218\uAE08\uAD00\uB9AC", url: "/receivables" },
-      { title: "입금완료", url: "/deposit-confirmations" },
+      { title: "입금확인", url: "/deposit-confirmations" },
     ],
   },
   {

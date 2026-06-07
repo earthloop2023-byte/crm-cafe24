@@ -462,7 +462,21 @@ export class DatabaseStorage implements IStorage {
 
   async getSystemLogs(): Promise<SystemLog[]> {
     const results = await db.select().from(systemLogs).orderBy(desc(systemLogs.createdAt));
-    return results.map((row) => decryptPiiRow(row, SYSTEM_LOG_PII_FIELDS));
+    return results.map((row) => {
+      try {
+        return decryptPiiRow(row, SYSTEM_LOG_PII_FIELDS);
+      } catch (error) {
+        console.warn(`System log decrypt skipped: ${row.id}`, error instanceof Error ? error.message : error);
+        return {
+          ...row,
+          loginId: "",
+          userName: "복호화 실패",
+          ipAddress: "",
+          userAgent: "",
+          details: null,
+        };
+      }
+    });
   }
 
   async createSystemLog(log: InsertSystemLog): Promise<SystemLog> {

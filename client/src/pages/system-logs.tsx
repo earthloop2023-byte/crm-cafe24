@@ -11,7 +11,7 @@ import { Activity, Clock, Download, Filter, Search, User } from "lucide-react";
 import { Pagination } from "@/components/pagination";
 import { format } from "date-fns";
 import type { SystemLog } from "@shared/schema";
-import { getKoreanEndOfDay, getKoreanStartOfMonth, isWithinKoreanDateRange } from "@/lib/korean-time";
+import { getKoreanEndOfDay, getKoreanStartOfMonth, getKoreanStartOfYear, isWithinKoreanDateRange } from "@/lib/korean-time";
 import { useSettings } from "@/lib/settings";
 
 const actionTypeLabels: Record<string, string> = {
@@ -153,7 +153,7 @@ export default function SystemLogsPage() {
           onStartDateChange={setStartDate}
           onEndDateChange={setEndDate}
           onReset={() => {
-            setStartDate(getKoreanStartOfMonth());
+            setStartDate(getKoreanStartOfYear());
             setEndDate(getKoreanEndOfDay());
           }}
         />
