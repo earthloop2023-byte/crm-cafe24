@@ -16,6 +16,7 @@ import { getKoreanDateKey, getKoreanEndOfDay, getKoreanStartOfMonth } from "@/li
 import { useSettings } from "@/lib/settings";
 import { useToast } from "@/hooks/use-toast";
 import { matchesKoreanSearch } from "@shared/korean-search";
+import { getContractGrossAmount } from "@/lib/contract-financials";
 
 type ReceivableStatus = "미수" | "초과/환불확인";
 
@@ -66,7 +67,12 @@ function isRefundContract(contract: Contract) {
 }
 
 function getSignedContractAmount(contract: Contract) {
-  return Math.round(Number(contract.cost) || 0);
+  const rawCost = Math.round(Number(contract.cost) || 0);
+  const grossAmount = Math.round(getContractGrossAmount({ ...contract, cost: Math.abs(rawCost) }));
+  if (isRefundContract(contract) || rawCost < 0) {
+    return -grossAmount;
+  }
+  return grossAmount;
 }
 
 function getPositiveContractAmount(contract: Contract) {
