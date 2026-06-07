@@ -545,6 +545,67 @@ async function ensureContractColumns() {
     ADD COLUMN IF NOT EXISTS source_contract_id varchar,
     ADD COLUMN IF NOT EXISTS source_item_id text
   `);
+  await backfillContractRenewalSchedule();
+}
+
+async function backfillContractRenewalSchedule() {
+  const existing = await pool.query<{ missing_count: string }>(
+    `
+      SELECT COUNT(*) AS missing_count
+      FROM contracts
+      WHERE renewal_due_date IS NULL
+        AND COALESCE(contract_type, '') <> $1
+        AND contract_date IS NOT NULL
+    `,
+    [CONTRACT_TYPE_REFUND],
+  );
+  if (Number(existing.rows[0]?.missing_count || 0) === 0) return;
+
+  const [productsResult, contractsResult] = await Promise.all([
+    pool.query<{ name: string | null; category: string | null }>(`SELECT name, category FROM products`),
+    pool.query<{
+      id: string;
+      contract_date: Date | string | null;
+      products: string | null;
+      days: number | null;
+      product_details_json: string | null;
+      contract_type: string | null;
+    }>(
+      `
+        SELECT id, contract_date, products, days, product_details_json, contract_type
+        FROM contracts
+        WHERE renewal_due_date IS NULL
+          AND COALESCE(contract_type, '') <> $1
+          AND contract_date IS NOT NULL
+      `,
+      [CONTRACT_TYPE_REFUND],
+    ),
+  ]);
+
+  for (const row of contractsResult.rows) {
+    const contract = {
+      contractDate: row.contract_date,
+      products: row.products,
+      days: row.days,
+      productDetailsJson: row.product_details_json,
+      contractType: row.contract_type,
+    };
+    const dueOffsetDays = getRenewalDueOffsetDays(contract, productsResult.rows);
+    const dueDate = getRenewalDueDateForContract(contract.contractDate, dueOffsetDays);
+    if (!dueDate) continue;
+
+    const durationDays = getRenewalDurationDays(contract);
+    await pool.query(
+      `
+        UPDATE contracts
+        SET renewal_due_date = $2,
+            renewal_alert_disabled = CASE WHEN $3 THEN true ELSE COALESCE(renewal_alert_disabled, false) END
+        WHERE id = $1
+          AND renewal_due_date IS NULL
+      `,
+      [row.id, dueDate, durationDays <= 1],
+    );
+  }
 }
 
 async function ensureDepositRefundMatchesTable() {
