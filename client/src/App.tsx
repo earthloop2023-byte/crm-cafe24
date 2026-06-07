@@ -15,7 +15,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { AppSidebar } from "@/components/app-sidebar";
-import { CalculatorDialog } from "@/components/calculator-dialog";
+import { RenewalAlertMenu } from "@/components/slot-alert-menu";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { UserProfileMenu } from "@/components/user-profile-menu";
 import { AuthProvider, useAuth } from "@/lib/auth";
@@ -160,7 +160,7 @@ function AuthenticatedApp() {
                     <SidebarTrigger data-testid="button-sidebar-toggle" />
                     <div className="flex items-center gap-2">
                       <ThemeToggle />
-                      <CalculatorDialog />
+                      <RenewalAlertMenu />
                       <UserProfileMenu />
                     </div>
                   </header>

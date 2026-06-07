@@ -1,5 +1,6 @@
 ﻿import { useState, useMemo, useRef, useEffect, useDeferredValue } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import type { SyntheticEvent } from "react";
 import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
@@ -18,6 +19,7 @@ import {
   Trash2, 
   Copy,
   CalendarIcon,
+  Bell,
   RotateCcw,
   ChevronDown,
   GripVertical,
@@ -271,6 +273,7 @@ export default function ContractsPage() {
   const { toast } = useToast();
   const { user: loggedInUser } = useAuth();
   const { formatDate } = useSettings();
+  const [location] = useLocation();
   const [searchQuery, setSearchQuery] = useState("");
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -310,6 +313,34 @@ export default function ContractsPage() {
   const [sortOption, setSortOption] = useState<string>("contractDateDesc");
   const [startDate, setStartDate] = useState<Date>(getKoreanStartOfMonth());
   const [endDate, setEndDate] = useState<Date>(getKoreanEndOfDay());
+  const [renewalDueDateTouched, setRenewalDueDateTouched] = useState(false);
+  const [focusedContractNumber, setFocusedContractNumber] = useState("");
+
+  useEffect(() => {
+    const routeQuery = location.includes("?") ? location.slice(location.indexOf("?")) : "";
+    const browserQuery = typeof window !== "undefined" ? window.location.search : "";
+    const query = routeQuery || browserQuery;
+    if (!query) {
+      setFocusedContractNumber("");
+      return;
+    }
+    const params = new URLSearchParams(query);
+    const contractNumber = (params.get("contractNumber") || params.get("contract") || "").trim();
+    if (!contractNumber) {
+      setFocusedContractNumber("");
+      return;
+    }
+
+    setFocusedContractNumber(contractNumber);
+    setSearchQuery(contractNumber);
+    setCurrentPage(1);
+    setManagerFilter("all");
+    setCustomerFilter("all");
+    setProductFilter("all");
+    setPaymentFilter("all");
+    setStartDate(new Date(2020, 0, 1, 0, 0, 0, 0));
+    setEndDate(new Date(2099, 11, 31, 23, 59, 59, 999));
+  }, [location]);
 
   // Product item type for the form
   interface ProductItem {
@@ -410,11 +441,19 @@ export default function ContractsPage() {
     const params = new URLSearchParams();
     params.set("page", String(currentPage));
     params.set("pageSize", String(pageSize));
+
+    const normalizedSearch = deferredSearchQuery.trim();
+    if (focusedContractNumber) {
+      params.set("contractNumber", focusedContractNumber);
+      return params.toString();
+    }
+
     params.set("startDate", format(startDate, "yyyy-MM-dd"));
     params.set("endDate", format(endDate, "yyyy-MM-dd"));
 
-    const normalizedSearch = deferredSearchQuery.trim();
-    if (normalizedSearch) params.set("search", normalizedSearch);
+    if (normalizedSearch) {
+      params.set("search", normalizedSearch);
+    }
     if (managerFilter !== "all") params.set("manager", managerFilter);
     if (customerFilter !== "all") params.set("customer", customerFilter);
     if (productFilter !== "all") params.set("productCategory", productFilter);
@@ -427,6 +466,7 @@ export default function ContractsPage() {
     startDate,
     endDate,
     deferredSearchQuery,
+    focusedContractNumber,
     managerFilter,
     customerFilter,
     productFilter,
@@ -824,17 +864,70 @@ export default function ContractsPage() {
     }));
   };
   const showProfitColumns = !["매니저", "상담원"].includes(currentUser?.role || "");
-  const contractsTableColSpan = showProfitColumns ? 16 : 13;
+  const contractsTableColSpan = showProfitColumns ? 17 : 14;
   const isEditReadOnly = editDialogMode === "view";
   const matchedDepositForEditingContract = editingContractId
     ? linkedDepositByContractId.get(editingContractId) ?? null
     : null;
   const isPaymentMethodLocked = !isEditReadOnly && !!matchedDepositForEditingContract;
 
+  const getRenewalDurationDays = (items: ProductItem[]) => {
+    const validItems = items.filter((item) => String(item.productName || "").trim());
+    const durations = validItems.map((item) => Math.max(0, getEffectiveDays(item)));
+    return Math.max(0, ...durations);
+  };
+  const isSlotRenewalProduct = (item: ProductItem) =>
+    normalizeText(getProductByName(item.productName)?.category).replace(/\s+/g, "") === "슬롯상품";
+  const getRenewalDueOffsetDays = (items: ProductItem[]) => {
+    const validItems = items.filter((item) => String(item.productName || "").trim());
+    if (validItems.length === 0) return 0;
+    return Math.max(
+      0,
+      ...validItems.map((item) => Math.max(0, getEffectiveDays(item)) + (isSlotRenewalProduct(item) ? 1 : 0)),
+    );
+  };
+  const getDefaultRenewalDueDate = (
+    contractDateValue: Date | string | null | undefined,
+    items: ProductItem[],
+  ) => {
+    const base = contractDateValue ? new Date(contractDateValue) : getKoreanNow();
+    const next = new Date(base);
+    next.setDate(next.getDate() + getRenewalDueOffsetDays(items));
+    next.setHours(12, 0, 0, 0);
+    return next;
+  };
+
+  useEffect(() => {
+    if (!isCreateOpen || renewalDueDateTouched) return;
+    const nextRenewalDueDate = getDefaultRenewalDueDate(formData.contractDate as Date | string | null | undefined, productItems);
+    setFormData((prev) => ({
+      ...prev,
+      renewalDueDate: nextRenewalDueDate,
+    }));
+  }, [isCreateOpen, renewalDueDateTouched, formData.contractDate, productItems]);
+
+  useEffect(() => {
+    if (!isCreateOpen && !isEditOpen) return;
+    const renewalDurationDays = getRenewalDurationDays(productItems);
+    if (isCreateOpen) {
+      setFormData((prev) => ({
+        ...prev,
+        renewalAlertDisabled: renewalDurationDays <= 1,
+      }));
+      return;
+    }
+    if (renewalDurationDays > 1) return;
+    setFormData((prev) => ({
+      ...prev,
+      renewalAlertDisabled: true,
+    }));
+  }, [isCreateOpen, isEditOpen, productItems]);
+
   const resetForm = () => {
     setFormData(getDefaultContractFormData());
     setProductItems([createEmptyProductItem("1")]);
     setProductItemNumericDrafts({});
+    setRenewalDueDateTouched(false);
     setIsWorkCostOverrideOpen(false);
     setWorkCostOverrideContractId(null);
     setWorkCostOverrideItemId(null);
@@ -1406,6 +1499,16 @@ export default function ContractsPage() {
     setFormData((prev) => ({
       ...prev,
       invoiceIssued: deriveInvoiceIssuedText(nextProductItems, prev.invoiceIssued),
+      ...(
+        (isCreateOpen && !renewalDueDateTouched) || (isEditOpen && !isEditReadOnly)
+          ? { renewalDueDate: getDefaultRenewalDueDate(prev.contractDate as Date | string | null | undefined, nextProductItems) }
+          : {}
+      ),
+      renewalAlertDisabled: isCreateOpen
+        ? getRenewalDurationDays(nextProductItems) <= 1
+        : getRenewalDurationDays(nextProductItems) <= 1
+          ? true
+          : Boolean((prev as Partial<InsertContract> & { renewalAlertDisabled?: boolean | null }).renewalAlertDisabled),
     }));
   };
 
@@ -1482,6 +1585,7 @@ export default function ContractsPage() {
     const autoContractNumber = formData.contractNumber || `CT-${format(new Date(), "yyyyMMddHHmmss")}`;
     const firstProduct = storedProductItems[0];
     const managerSelection = resolveManagerSelection(formData.managerName, formData.managerId);
+    const renewalDurationDays = getRenewalDurationDays(storedProductItems);
     const finalData = {
       ...formData,
       contractNumber: autoContractNumber,
@@ -1500,6 +1604,9 @@ export default function ContractsPage() {
       depositBank: normalizeDepositBankForForm(formData.depositBank, formData.paymentMethod),
       invoiceIssued: deriveInvoiceIssuedText(storedProductItems, formData.invoiceIssued),
       productDetailsJson: storedProductItems.length > 0 ? JSON.stringify(storedProductItems) : null,
+      renewalAlertDisabled: renewalDurationDays <= 1
+        ? true
+        : Boolean((formData as Partial<InsertContract> & { renewalAlertDisabled?: boolean | null }).renewalAlertDisabled),
     };
     
     createMutation.mutate(finalData as InsertContract);
@@ -1529,6 +1636,12 @@ export default function ContractsPage() {
       notes: contractToOpen.notes || "",
       disbursementStatus: "",
       userIdentifier: contractToOpen.userIdentifier || "",
+      renewalDueDate: (contractToOpen as Contract & { renewalDueDate?: Date | string | null }).renewalDueDate
+        ? new Date((contractToOpen as Contract & { renewalDueDate?: Date | string | null }).renewalDueDate as Date | string)
+        : getDefaultRenewalDueDate(contractToOpen.contractDate, displayItems),
+      renewalAlertDisabled: getRenewalDurationDays(displayItems) <= 1
+        ? true
+        : Boolean((contractToOpen as Contract & { renewalAlertDisabled?: boolean | null }).renewalAlertDisabled),
     });
 
     setProductItemNumericDrafts({});
@@ -1576,6 +1689,8 @@ export default function ContractsPage() {
       notes: sourceContract.notes || "",
       disbursementStatus: "",
       userIdentifier: sourceContract.userIdentifier || "",
+      renewalDueDate: getDefaultRenewalDueDate(today, displayItems),
+      renewalAlertDisabled: getRenewalDurationDays(displayItems) <= 1,
     });
     setProductItemNumericDrafts({});
     setProductItems(displayItems);
@@ -1595,6 +1710,7 @@ export default function ContractsPage() {
     const userIdentifiers = storedProductItems.map((item) => item.userIdentifier).filter(Boolean).join(", ");
     const firstProduct = storedProductItems[0];
     const managerSelection = resolveManagerSelection(formData.managerName, formData.managerId);
+    const renewalDurationDays = getRenewalDurationDays(storedProductItems);
     const finalData = {
       ...formData,
       managerId: managerSelection.managerId,
@@ -1612,6 +1728,9 @@ export default function ContractsPage() {
       depositBank: normalizeDepositBankForForm(formData.depositBank, formData.paymentMethod),
       invoiceIssued: deriveInvoiceIssuedText(storedProductItems, formData.invoiceIssued),
       productDetailsJson: storedProductItems.length > 0 ? JSON.stringify(storedProductItems) : null,
+      renewalAlertDisabled: renewalDurationDays <= 1
+        ? true
+        : Boolean((formData as Partial<InsertContract> & { renewalAlertDisabled?: boolean | null }).renewalAlertDisabled),
     };
     
     updateMutation.mutate({ id: editingContractId, data: finalData as Partial<InsertContract> });
@@ -2316,6 +2435,7 @@ export default function ContractsPage() {
               placeholder="계약번호, 고객명, 상품명, 아이디 검색"
               value={searchQuery}
               onChange={(e) => {
+                setFocusedContractNumber("");
                 setSearchQuery(e.target.value);
                 setCurrentPage(1);
               }}
@@ -2392,15 +2512,46 @@ export default function ContractsPage() {
                 </DialogDescription>
               </DialogHeader>
               <div className={contractDialogBodyClassName}>
-                <div className="grid gap-3 lg:max-w-[760px] lg:grid-cols-[180px_280px_220px] lg:items-end">
+                <div className="grid gap-3 lg:max-w-[1140px] lg:grid-cols-[180px_180px_280px_220px_150px] lg:items-end">
                   <div className="space-y-1">
                     <Label className="text-xs">계약일</Label>
                     <Input
                       type="date"
                       value={formData.contractDate ? getKoreanDateKey(formData.contractDate) : ""}
-                      onChange={(e) => setFormData({ ...formData, contractDate: parseKoreanDateInput(e.target.value, formData.contractDate as Date || getKoreanNow()) })}
+                      onChange={(e) => {
+                        const nextContractDate = parseKoreanDateInput(e.target.value, formData.contractDate as Date || getKoreanNow());
+                        setFormData((prev) => ({
+                          ...prev,
+                          contractDate: nextContractDate,
+                          ...(
+                            !renewalDueDateTouched
+                              ? { renewalDueDate: getDefaultRenewalDueDate(nextContractDate, productItems) }
+                              : {}
+                          ),
+                        }));
+                      }}
                       className="h-8 rounded-none text-sm"
                       data-testid="input-contract-date"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">계약연장 예정일</Label>
+                    <Input
+                      type="date"
+                      value={(formData as Partial<InsertContract> & { renewalDueDate?: Date | string | null }).renewalDueDate
+                        ? getKoreanDateKey((formData as Partial<InsertContract> & { renewalDueDate?: Date | string | null }).renewalDueDate as Date | string)
+                        : ""}
+                      onChange={(e) => {
+                        setRenewalDueDateTouched(true);
+                        setFormData({
+                          ...formData,
+                          renewalDueDate: e.target.value
+                            ? parseKoreanDateInput(e.target.value, getKoreanNow())
+                            : null,
+                        } as Partial<InsertContract>);
+                      }}
+                      className="h-8 rounded-none text-sm"
+                      data-testid="input-renewal-due-date"
                     />
                   </div>
                   <div className="space-y-1">
@@ -2440,6 +2591,19 @@ export default function ContractsPage() {
                       </SelectContent>
                     </Select>
                   </div>
+                  <label className="flex h-8 items-center gap-2 text-sm">
+                    <Checkbox
+                      checked={!Boolean((formData as Partial<InsertContract> & { renewalAlertDisabled?: boolean | null }).renewalAlertDisabled)}
+                      onCheckedChange={(checked) =>
+                        setFormData({
+                          ...formData,
+                          renewalAlertDisabled: !Boolean(checked),
+                        } as Partial<InsertContract>)
+                      }
+                      data-testid="checkbox-renewal-alert-enabled"
+                    />
+                    알림 활성화
+                  </label>
                 </div>
                 {/* 상품 정보 */}
                 <div className="flex min-h-0 flex-col gap-1">
@@ -2707,7 +2871,7 @@ export default function ContractsPage() {
                 </DialogDescription>
               </DialogHeader>
               <div className={contractDialogBodyClassName}>
-                <div className="grid gap-3 lg:max-w-[960px] lg:grid-cols-[190px_180px_280px_220px] lg:items-end">
+                <div className="grid gap-3 lg:max-w-[1300px] lg:grid-cols-[190px_180px_180px_280px_220px_150px] lg:items-end">
                   <div className="space-y-1">
                     <Label className="text-xs">계약번호</Label>
                     <Input
@@ -2722,9 +2886,36 @@ export default function ContractsPage() {
                     <Input
                       type="date"
                       value={formData.contractDate ? getKoreanDateKey(formData.contractDate) : ""}
-                      onChange={(e) => setFormData({ ...formData, contractDate: parseKoreanDateInput(e.target.value, formData.contractDate as Date || getKoreanNow()) })}
+                      onChange={(e) => {
+                        const nextContractDate = parseKoreanDateInput(e.target.value, formData.contractDate as Date || getKoreanNow());
+                        setFormData((prev) => ({
+                          ...prev,
+                          contractDate: nextContractDate,
+                          renewalDueDate: getDefaultRenewalDueDate(nextContractDate, productItems),
+                        }));
+                      }}
                       className="h-8 rounded-none text-sm"
                       data-testid="edit-input-contract-date"
+                      disabled={isEditReadOnly}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">계약연장 예정일</Label>
+                    <Input
+                      type="date"
+                      value={(formData as Partial<InsertContract> & { renewalDueDate?: Date | string | null }).renewalDueDate
+                        ? getKoreanDateKey((formData as Partial<InsertContract> & { renewalDueDate?: Date | string | null }).renewalDueDate as Date | string)
+                        : ""}
+                      onChange={(e) =>
+                        setFormData({
+                          ...formData,
+                          renewalDueDate: e.target.value
+                            ? parseKoreanDateInput(e.target.value, getKoreanNow())
+                            : null,
+                        } as Partial<InsertContract>)
+                      }
+                      className="h-8 rounded-none text-sm"
+                      data-testid="edit-input-renewal-due-date"
                       disabled={isEditReadOnly}
                     />
                   </div>
@@ -2767,6 +2958,20 @@ export default function ContractsPage() {
                       </SelectContent>
                     </Select>
                   </div>
+                  <label className="flex h-8 items-center gap-2 text-sm">
+                    <Checkbox
+                      checked={!Boolean((formData as Partial<InsertContract> & { renewalAlertDisabled?: boolean | null }).renewalAlertDisabled)}
+                      onCheckedChange={(checked) =>
+                        setFormData({
+                          ...formData,
+                          renewalAlertDisabled: !Boolean(checked),
+                        } as Partial<InsertContract>)
+                      }
+                      disabled={isEditReadOnly}
+                      data-testid="edit-checkbox-renewal-alert-enabled"
+                    />
+                    알림 활성화
+                  </label>
                 </div>
                 <div className="flex min-h-0 flex-col gap-1">
                   <Label className="text-sm font-medium">상품 정보</Label>
@@ -3124,6 +3329,7 @@ export default function ContractsPage() {
             setProductFilter("all");
             setPaymentFilter("all");
             setSortOption("contractDateDesc");
+            setFocusedContractNumber("");
             setSearchQuery("");
             setStartDate(getKoreanStartOfMonth());
             setEndDate(getKoreanEndOfDay());
@@ -3201,7 +3407,7 @@ export default function ContractsPage() {
                 </TableHead>
                 <TableHead className="text-xs font-medium whitespace-nowrap">
                   <div className="flex items-center gap-1">
-                    <span>날짜</span>
+                    <span>계약일</span>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <button
@@ -3223,6 +3429,7 @@ export default function ContractsPage() {
                     </DropdownMenu>
                   </div>
                 </TableHead>
+                <TableHead className="text-xs font-medium whitespace-nowrap">계약연장 예정일</TableHead>
                 <TableHead className="text-xs font-medium whitespace-nowrap">
                   <div className="flex items-center gap-1">
                     <span>고객명</span>
@@ -3302,6 +3509,21 @@ export default function ContractsPage() {
                     </TableCell>
                     <TableCell className="text-xs whitespace-nowrap align-top">
                       {formatDate(contract.contractDate)}
+                    </TableCell>
+                    <TableCell className="text-xs whitespace-nowrap align-top">
+                      <span className="inline-flex items-center gap-1">
+                        {(contract as Contract & { renewalDueDate?: string | Date | null }).renewalDueDate
+                          ? formatDate((contract as Contract & { renewalDueDate?: string | Date | null }).renewalDueDate as any)
+                          : "-"}
+                        {(contract as Contract & { renewalDueDate?: string | Date | null; renewalAlertDisabled?: boolean | null }).renewalDueDate &&
+                          !Boolean((contract as Contract & { renewalAlertDisabled?: boolean | null }).renewalAlertDisabled) && (
+                            <Bell
+                              className="h-3.5 w-3.5 text-red-500"
+                              aria-label="계약연장 알림 활성화"
+                              data-testid={`icon-renewal-alert-active-${contract.id}-${itemIndex}`}
+                            />
+                          )}
+                      </span>
                     </TableCell>
                     <TableCell className="text-xs text-primary whitespace-nowrap align-top">
                       {contract.customerName}
