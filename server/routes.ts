@@ -559,7 +559,8 @@ async function backfillContractRenewalSchedule() {
     `,
     [CONTRACT_TYPE_REFUND],
   );
-  if (Number(existing.rows[0]?.missing_count || 0) === 0) return;
+  const missingCount = Number(existing.rows[0]?.missing_count || 0);
+  if (missingCount === 0) return { missingCount, updatedCount: 0 };
 
   const [productsResult, contractsResult] = await Promise.all([
     pool.query<{ name: string | null; category: string | null }>(`SELECT name, category FROM products`),
@@ -582,6 +583,7 @@ async function backfillContractRenewalSchedule() {
     ),
   ]);
 
+  let updatedCount = 0;
   for (const row of contractsResult.rows) {
     const contract = {
       contractDate: row.contract_date,
@@ -595,7 +597,7 @@ async function backfillContractRenewalSchedule() {
     if (!dueDate) continue;
 
     const durationDays = getRenewalDurationDays(contract);
-    await pool.query(
+    const updated = await pool.query(
       `
         UPDATE contracts
         SET renewal_due_date = $2,
@@ -605,7 +607,9 @@ async function backfillContractRenewalSchedule() {
       `,
       [row.id, dueDate, durationDays <= 1],
     );
+    updatedCount += updated.rowCount || 0;
   }
+  return { missingCount, updatedCount };
 }
 
 async function ensureDepositRefundMatchesTable() {
@@ -5060,6 +5064,20 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error fetching product rate histories:", error);
       res.status(500).json({ error: "Failed to fetch product rate histories" });
+    }
+  });
+
+  app.post("/api/admin/renewal-backfill", requireAuth, async (req, res) => {
+    try {
+      const currentUser = req.session.userId ? await storage.getUser(req.session.userId) : null;
+      if (!currentUser || !PERMISSION_ADMIN_ROLES.includes(currentUser.role || "")) {
+        return res.status(403).json({ error: "Unauthorized" });
+      }
+      const result = await backfillContractRenewalSchedule();
+      res.json({ ok: true, ...result });
+    } catch (error) {
+      console.error("Error backfilling renewal schedule:", error);
+      res.status(500).json({ error: "Failed to backfill renewal schedule" });
     }
   });
 
