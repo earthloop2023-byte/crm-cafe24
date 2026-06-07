@@ -1,0 +1,2 @@
+force redeploy marker 2026-06-07T15:25:00+09:00
+reason: refresh cafe24 github app source cache after mobile modal fix
