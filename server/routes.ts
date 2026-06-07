@@ -685,6 +685,60 @@ async function hasContractDepositMatch(contractId: string): Promise<boolean> {
   return Boolean(result.rows[0]?.matched);
 }
 
+async function getDepositDeletionBlockers(depositId: string) {
+  const existing = await storage.getDeposit(depositId);
+  if (!existing) {
+    return {
+      deposit: null,
+      refundIds: [] as string[],
+      refundContractIds: [] as string[],
+    };
+  }
+
+  const contractId = String(existing.contractId || "").trim();
+  const matchedRefundIds = await getDepositRefundMatchIds(depositId);
+  if (!contractId) {
+    return {
+      deposit: existing,
+      refundIds: matchedRefundIds,
+      refundContractIds: [] as string[],
+    };
+  }
+
+  const [refundContracts, refundRows] = await Promise.all([
+    storage.getRefundContractsBySource(contractId),
+    storage.getRefundsByContract(contractId),
+  ]);
+  const activeRefundContractIds = refundContracts
+    .filter((contract) => !isWithdrawnContract(contract))
+    .map((contract) => String(contract.id || "").trim())
+    .filter(Boolean);
+  const activeRefundIds = Array.from(
+    new Set([
+      ...matchedRefundIds,
+      ...refundRows.map((refund) => String(refund.id || "").trim()).filter(Boolean),
+    ]),
+  );
+
+  return {
+    deposit: existing,
+    refundIds: activeRefundIds,
+    refundContractIds: activeRefundContractIds,
+  };
+}
+
+function hasDepositDeletionBlockers(blockers: Awaited<ReturnType<typeof getDepositDeletionBlockers>>): boolean {
+  return blockers.refundIds.length > 0 || blockers.refundContractIds.length > 0;
+}
+
+function sendDepositDeletionBlocked(res: Response, blockers: Awaited<ReturnType<typeof getDepositDeletionBlockers>>) {
+  return res.status(409).json({
+    error: "환불 처리된 계약의 입금확인은 삭제할 수 없습니다. 환불 철회 후 입금확인을 삭제해주세요.",
+    refundIds: blockers.refundIds,
+    refundContractIds: blockers.refundContractIds,
+  });
+}
+
 async function ensureFinancialHistoryColumns() {
   await pool.query(`
     ALTER TABLE refunds
@@ -6459,7 +6513,15 @@ export async function registerRoutes(
   app.delete("/api/deposits/:id", autoLoginDev, requireAuth, requireDepositActionAllowed, async (req, res) => {
     try {
       const depositId = req.params.id as string;
-      const existing = await storage.getDeposit(depositId);
+      const blockers = await getDepositDeletionBlockers(depositId);
+      if (!blockers.deposit) {
+        return res.status(404).json({ error: "Deposit not found" });
+      }
+      if (hasDepositDeletionBlockers(blockers)) {
+        return sendDepositDeletionBlocked(res, blockers);
+      }
+
+      const existing = blockers.deposit;
       const matchedRefundIds = await getDepositRefundMatchIds(depositId);
       if (matchedRefundIds.length > 0) {
         await clearDepositRefundMatches(depositId);
@@ -6486,6 +6548,17 @@ export async function registerRoutes(
       if (!Array.isArray(ids) || ids.length === 0) {
         return res.status(400).json({ error: "삭제할 항목을 선택해주세요." });
       }
+      const deleteChecks = await Promise.all(ids.map((id) => getDepositDeletionBlockers(String(id || "").trim())));
+      const blocked = deleteChecks.filter(hasDepositDeletionBlockers);
+      if (blocked.length > 0) {
+        return res.status(409).json({
+          error: "환불 처리된 계약의 입금확인은 삭제할 수 없습니다. 환불 철회 후 입금확인을 삭제해주세요.",
+          blockedDepositIds: blocked.map((blocker) => blocker.deposit?.id).filter(Boolean),
+          refundIds: Array.from(new Set(blocked.flatMap((blocker) => blocker.refundIds))),
+          refundContractIds: Array.from(new Set(blocked.flatMap((blocker) => blocker.refundContractIds))),
+        });
+      }
+
       const deletedIds: string[] = [];
       for (const id of ids) {
         const existing = await storage.getDeposit(id);

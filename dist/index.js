@@ -2836,6 +2836,51 @@ async function hasContractDepositMatch(contractId) {
   );
   return Boolean(result.rows[0]?.matched);
 }
+async function getDepositDeletionBlockers(depositId) {
+  const existing = await storage.getDeposit(depositId);
+  if (!existing) {
+    return {
+      deposit: null,
+      refundIds: [],
+      refundContractIds: []
+    };
+  }
+  const contractId = String(existing.contractId || "").trim();
+  const matchedRefundIds = await getDepositRefundMatchIds(depositId);
+  if (!contractId) {
+    return {
+      deposit: existing,
+      refundIds: matchedRefundIds,
+      refundContractIds: []
+    };
+  }
+  const [refundContracts, refundRows] = await Promise.all([
+    storage.getRefundContractsBySource(contractId),
+    storage.getRefundsByContract(contractId)
+  ]);
+  const activeRefundContractIds = refundContracts.filter((contract) => !isWithdrawnContract(contract)).map((contract) => String(contract.id || "").trim()).filter(Boolean);
+  const activeRefundIds = Array.from(
+    /* @__PURE__ */ new Set([
+      ...matchedRefundIds,
+      ...refundRows.map((refund) => String(refund.id || "").trim()).filter(Boolean)
+    ])
+  );
+  return {
+    deposit: existing,
+    refundIds: activeRefundIds,
+    refundContractIds: activeRefundContractIds
+  };
+}
+function hasDepositDeletionBlockers(blockers) {
+  return blockers.refundIds.length > 0 || blockers.refundContractIds.length > 0;
+}
+function sendDepositDeletionBlocked(res, blockers) {
+  return res.status(409).json({
+    error: "\uD658\uBD88 \uCC98\uB9AC\uB41C \uACC4\uC57D\uC758 \uC785\uAE08\uD655\uC778\uC740 \uC0AD\uC81C\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4. \uD658\uBD88 \uCCA0\uD68C \uD6C4 \uC785\uAE08\uD655\uC778\uC744 \uC0AD\uC81C\uD574\uC8FC\uC138\uC694.",
+    refundIds: blockers.refundIds,
+    refundContractIds: blockers.refundContractIds
+  });
+}
 async function ensureFinancialHistoryColumns() {
   await pool.query(`
     ALTER TABLE refunds
@@ -7201,7 +7246,14 @@ async function registerRoutes(httpServer2, app2) {
   app2.delete("/api/deposits/:id", autoLoginDev, requireAuth, requireDepositActionAllowed, async (req, res) => {
     try {
       const depositId = req.params.id;
-      const existing = await storage.getDeposit(depositId);
+      const blockers = await getDepositDeletionBlockers(depositId);
+      if (!blockers.deposit) {
+        return res.status(404).json({ error: "Deposit not found" });
+      }
+      if (hasDepositDeletionBlockers(blockers)) {
+        return sendDepositDeletionBlocked(res, blockers);
+      }
+      const existing = blockers.deposit;
       const matchedRefundIds = await getDepositRefundMatchIds(depositId);
       if (matchedRefundIds.length > 0) {
         await clearDepositRefundMatches(depositId);
@@ -7226,6 +7278,16 @@ async function registerRoutes(httpServer2, app2) {
       const { ids } = req.body;
       if (!Array.isArray(ids) || ids.length === 0) {
         return res.status(400).json({ error: "\uC0AD\uC81C\uD560 \uD56D\uBAA9\uC744 \uC120\uD0DD\uD574\uC8FC\uC138\uC694." });
+      }
+      const deleteChecks = await Promise.all(ids.map((id) => getDepositDeletionBlockers(String(id || "").trim())));
+      const blocked = deleteChecks.filter(hasDepositDeletionBlockers);
+      if (blocked.length > 0) {
+        return res.status(409).json({
+          error: "\uD658\uBD88 \uCC98\uB9AC\uB41C \uACC4\uC57D\uC758 \uC785\uAE08\uD655\uC778\uC740 \uC0AD\uC81C\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4. \uD658\uBD88 \uCCA0\uD68C \uD6C4 \uC785\uAE08\uD655\uC778\uC744 \uC0AD\uC81C\uD574\uC8FC\uC138\uC694.",
+          blockedDepositIds: blocked.map((blocker) => blocker.deposit?.id).filter(Boolean),
+          refundIds: Array.from(new Set(blocked.flatMap((blocker) => blocker.refundIds))),
+          refundContractIds: Array.from(new Set(blocked.flatMap((blocker) => blocker.refundContractIds)))
+        });
       }
       const deletedIds = [];
       for (const id of ids) {
