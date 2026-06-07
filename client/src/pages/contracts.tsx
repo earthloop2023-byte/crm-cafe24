@@ -2314,8 +2314,9 @@ export default function ContractsPage() {
 
   const shouldScrollProductItems = productItems.length > 5;
   const productRowsViewportClassName = shouldScrollProductItems ? "max-h-[292px] overflow-y-auto" : "";
-  const contractDialogClassName = "top-[56px] flex w-[95vw] max-w-[1700px] max-h-[calc(100dvh-80px)] translate-y-0 flex-col gap-3 overflow-hidden rounded-none p-3 sm:top-[70px] sm:max-h-[calc(100dvh-140px)] sm:p-4";
-  const contractDialogBodyClassName = "flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1";
+  const contractDialogClassName = "top-3 flex h-[calc(100svh-24px)] w-[calc(100vw-24px)] max-w-[1700px] max-h-[calc(100svh-24px)] translate-y-0 flex-col gap-3 overflow-hidden rounded-none p-3 sm:top-[70px] sm:h-auto sm:w-[95vw] sm:max-h-[calc(100dvh-140px)] sm:p-4";
+  const contractDialogBodyClassName = "flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain pr-1";
+  const contractDialogFooterClassName = "sticky bottom-0 z-10 flex w-full shrink-0 justify-end gap-2 border-t bg-background pt-3 pb-[calc(0.25rem+env(safe-area-inset-bottom))]";
 
   const getItemMarginRate = (item: ProductItem) => {
     return calculateMarginRateFromMarginAmount(item);
@@ -2836,7 +2837,7 @@ export default function ContractsPage() {
                   </div>
                 </div>
 
-                <div className="sticky bottom-0 z-10 flex w-full shrink-0 justify-end gap-2 border-t bg-background pt-3">
+                <div className={contractDialogFooterClassName}>
                   <Button
                     variant="outline"
                     onClick={closeCreateDialog}
@@ -3217,7 +3218,7 @@ export default function ContractsPage() {
                   </div>
                 </div>
 
-                <div className="sticky bottom-0 z-10 flex w-full shrink-0 justify-end gap-2 border-t bg-background pt-3">
+                <div className={contractDialogFooterClassName}>
                   <Button
                     variant="outline"
                     onClick={() => { setIsEditOpen(false); setEditingContractId(null); setEditDialogMode("edit"); resetForm(); }}
